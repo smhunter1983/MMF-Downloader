@@ -1,0 +1,11 @@
+# Secrets and local state never leave this machine
+config.local.json
+*.local.json
+data/
+node_modules/
+
+# Scratch and OS files
+*.log
+*.mjs.tmp
+Thumbs.db
+.DS_Store

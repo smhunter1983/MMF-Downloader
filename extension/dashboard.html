@@ -1,0 +1,93 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>MMF Downloader</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f6f7f8; --panel: #ffffff; --text: #1d2125; --muted: #6b737b; --line: #e3e6e9;
+    --accent: #1fa67a; --accent-ink: #ffffff; --warn: #b7791f; --warn-bg: #fdf3e1; --bad: #c9473f;
+    --row-hover: #f0f3f5;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #15181b; --panel: #1d2125; --text: #e6e9ec; --muted: #8d969e; --line: #2c3136;
+      --accent: #2bbf8e; --accent-ink: #0d1f18; --warn: #f0b75b; --warn-bg: #3a2f1c; --bad: #ef6b62;
+      --row-hover: #252a2f;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { position: sticky; top: 0; z-index: 2; background: var(--panel); border-bottom: 1px solid var(--line); padding: 14px 16px 12px; }
+  .title { display: flex; align-items: center; gap: 10px; }
+  .title h1 { font-size: 16px; margin: 0; flex: 1; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); flex: none; }
+  .dot.ok { background: var(--accent); } .dot.bad { background: var(--bad); }
+  button { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--text); border-radius: 7px; padding: 6px 12px; cursor: pointer; }
+  button:hover:not(:disabled) { border-color: var(--muted); }
+  button:disabled { opacity: .45; cursor: default; }
+  #pin { padding: 6px 9px; filter: grayscale(1); opacity: .6; }
+  #pin.on { filter: none; opacity: 1; border-color: var(--accent); background: var(--row-hover); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+  .bar { height: 8px; border-radius: 4px; background: var(--line); overflow: hidden; margin: 12px 0 6px; }
+  .bar > div { height: 100%; width: 0; background: var(--accent); transition: width .4s; }
+  .stats { display: flex; flex-wrap: wrap; gap: 4px 18px; color: var(--muted); font-size: 12px; }
+  .stats b { color: var(--text); font-weight: 600; }
+  .stats .atcap { color: var(--warn); font-weight: 600; }
+  .msg { margin-top: 10px; padding: 8px 10px; border-radius: 7px; background: var(--row-hover); white-space: pre-line; }
+  .msg.warn { background: var(--warn-bg); color: var(--warn); }
+  .toolbar { display: flex; gap: 8px; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--bg); position: sticky; top: var(--header-h, 150px); z-index: 1; }
+  .toolbar input { flex: 1; font: inherit; padding: 6px 10px; border-radius: 7px; border: 1px solid var(--line); background: var(--panel); color: var(--text); }
+  .selsum { color: var(--muted); font-size: 12px; padding: 8px 16px 0; }
+  .tree { padding: 6px 8px 40px; }
+  .row { display: grid; grid-template-columns: 22px 18px 1fr auto auto; align-items: center; gap: 6px; padding: 5px 8px; border-radius: 6px; }
+  .row:hover { background: var(--row-hover); }
+  .row .twisty { cursor: pointer; color: var(--muted); user-select: none; text-align: center; }
+  .row .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .meta { color: var(--muted); font-size: 12px; text-align: right; white-space: nowrap; }
+  .row .state { font-size: 11px; min-width: 64px; text-align: right; color: var(--muted); }
+  .row .state.done { color: var(--accent); } .row .state.failed { color: var(--bad); }
+  .row .state.link { cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
+  .row .state.link:hover { text-decoration-style: solid; }
+  .lvl-0 > .row { font-weight: 600; }
+  .lvl-1 { margin-left: 20px; } .lvl-2 { margin-left: 40px; }
+  .skipped > .row .name, .skipped > .row .meta { opacity: .5; text-decoration: line-through; }
+  .hidden { display: none; }
+  .empty { padding: 30px 16px; color: var(--muted); text-align: center; }
+  input[type=checkbox] { accent-color: var(--accent); width: 15px; height: 15px; margin: 0; cursor: pointer; }
+</style>
+</head>
+<body>
+  <header id="header">
+    <div class="title">
+      <span id="dot" class="dot"></span>
+      <h1>MMF Downloader</h1>
+      <button id="pin" title="Keep this window on top">📌</button>
+      <button id="sync">Sync library</button>
+      <button id="start" class="primary">Start</button>
+      <button id="pause">Pause</button>
+    </div>
+    <div class="bar"><div id="fill"></div></div>
+    <div class="stats">
+      <span><b id="count">-</b> files</span>
+      <span><b id="bytes">-</b></span>
+      <span id="skippedStat"></span>
+      <span id="rate"></span>
+      <span id="eta"></span>
+      <span id="failed"></span>
+    </div>
+    <div id="msg" class="msg">Connecting...</div>
+  </header>
+  <div class="toolbar" id="toolbar">
+    <input id="search" type="search" placeholder="Filter creators, releases, models...">
+    <button id="getAll" title="Check (Get) everything shown; with a filter, only what matches">Check all</button>
+    <button id="skipAll" title="Uncheck (Skip) everything shown; with a filter, only what matches">Uncheck all</button>
+    <button id="expand">Expand</button>
+    <button id="retry" class="hidden">Retry failed</button>
+  </div>
+  <div class="selsum" id="selsum"></div>
+  <div class="tree" id="tree"></div>
+  <script src="dashboard.js"></script>
+</body>
+</html>

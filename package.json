@@ -1,0 +1,11 @@
+{
+  "name": "mmf-downloader",
+  "version": "0.1.0",
+  "description": "Archive a MyMiniFactory library locally (Phase 0: prove the pipeline).",
+  "type": "module",
+  "bin": { "mmf": "./mmf.js" },
+  "engines": { "node": ">=20" },
+  "scripts": { "test": "node --test" },
+  "license": "UNLICENSED",
+  "private": true
+}

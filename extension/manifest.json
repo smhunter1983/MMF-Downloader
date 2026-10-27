@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "MMF Downloader",
+  "version": "0.3.0",
+  "description": "Downloads your MyMiniFactory library through Chrome, one file at a time, for the local MMF Downloader archiver.",
+  "permissions": ["downloads", "storage", "alarms"],
+  "host_permissions": ["http://127.0.0.1:8766/*", "https://www.myminifactory.com/*"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_title": "Open MMF Downloader" }
+}
