@@ -123,7 +123,68 @@ export async function mergeQueue(existing, planned, archiveRoot) {
     }
     items.push(item);
   }
-  return { plannedAt: new Date().toISOString(), items };
+  const keys = new Set(items.map((i) => i.key));
+  const batch = existing?.batch
+    ? { ...existing.batch, keys: existing.batch.keys.filter((k) => keys.has(k)) }
+    : undefined;
+  return { plannedAt: new Date().toISOString(), items, batch, lastBatch: existing?.lastBatch };
+}
+
+// ---------- batches ----------
+// A batch is what Start sets in motion: the selected files not yet done,
+// plus anything selected while it runs. Progress, GB and ETA in the
+// dashboard count the batch, then reset when it finishes.
+
+const sizeOfItem = (i) => Number(i.size) || Number(i.doneBytes) || 0;
+const wanted = (i) => !i.skip && i.status !== STATUS.DONE;
+
+export function startBatch(q, now = Date.now()) {
+  const add = q.items.filter(wanted).map((i) => i.key);
+  if (!add.length && !q.batch) return false;
+  if (!q.batch) q.batch = { startedAt: new Date(now).toISOString(), keys: [] };
+  const have = new Set(q.batch.keys);
+  for (const k of add) if (!have.has(k)) q.batch.keys.push(k);
+  return true;
+}
+
+export function joinBatch(q, item, now = Date.now()) {
+  if (!q.batch) q.batch = { startedAt: new Date(now).toISOString(), keys: [] };
+  if (!q.batch.keys.includes(item.key)) q.batch.keys.push(item.key);
+}
+
+export function batchSummary(q) {
+  if (!q.batch) return null;
+  const byKey = new Map(q.items.map((i) => [i.key, i]));
+  const s = { total: 0, done: 0, failed: 0, bytesTotal: 0, bytesDone: 0, startedAt: q.batch.startedAt };
+  for (const k of q.batch.keys) {
+    const i = byKey.get(k);
+    if (!i || (i.skip && i.status !== STATUS.DONE)) continue; // unchecked mid-run
+    s.total++;
+    s.bytesTotal += sizeOfItem(i);
+    if (i.status === STATUS.DONE) { s.done++; s.bytesDone += sizeOfItem(i); }
+    if (i.status === STATUS.FAILED) s.failed++;
+  }
+  return s;
+}
+
+// Closes the batch once every file in it is done or has failed for good.
+export function finishBatchIfDone(q, now = Date.now()) {
+  const b = batchSummary(q);
+  if (!b) return false;
+  if (b.done + b.failed < b.total) return false;
+  if (b.total) {
+    q.lastBatch = { files: b.done, failed: b.failed, bytes: b.bytesDone, startedAt: b.startedAt, finishedAt: new Date(now).toISOString() };
+  }
+  delete q.batch;
+  return true;
+}
+
+// What Start would download next (selected, not yet done).
+export function upcoming(q) {
+  let files = 0;
+  let bytes = 0;
+  for (const i of q.items) if (wanted(i)) { files++; bytes += sizeOfItem(i); }
+  return { files, bytes };
 }
 
 // Counts what's selected for download. Skipped files (Get/Skip in the

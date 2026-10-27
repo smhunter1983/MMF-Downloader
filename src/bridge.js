@@ -11,7 +11,10 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { appendFile, copyFile, mkdir, rename, rm, stat } from 'node:fs/promises';
 import { LOG_PATH, QUEUE_PATH } from './config.js';
-import { loadQueue, saveQueue, summarize, buildTree, setSkip, finalPath, STATUS, MAX_ATTEMPTS } from './queue.js';
+import {
+  loadQueue, saveQueue, summarize, buildTree, setSkip, finalPath, STATUS, MAX_ATTEMPTS,
+  startBatch, joinBatch, batchSummary, finishBatchIfDone, upcoming,
+} from './queue.js';
 import { verifyDownload } from './verify.js';
 import { pinWindow } from './pin.js';
 
@@ -163,12 +166,14 @@ export function createBridge(cfg, {
 
     const item = queue.items.find((i) => i.status === STATUS.PENDING && !i.skip);
     if (!item) {
+      finishBatchIfDone(queue, now());
       await save();
-      return { action: 'done', summary: summarize(queue) };
+      return { action: 'done', summary: summarize(queue), lastBatch: queue.lastBatch ?? null };
     }
     const rate = rateInfo();
     if (rate.waitMs > 0) return { action: 'wait', ms: rate.waitMs, reason: `Hourly cap (${rate.cap}) reached` };
 
+    joinBatch(queue, item, now());
     item.status = STATUS.ACTIVE;
     item.startedAt = new Date(now()).toISOString();
     starts.push(now());
@@ -246,6 +251,9 @@ export function createBridge(cfg, {
       paused: state.paused,
       pauseReason: state.pauseReason,
       summary: summarize(queue),
+      batch: batchSummary(queue),
+      lastBatch: queue.lastBatch ?? null,
+      upcoming: upcoming(queue),
       rate: rateInfo(),
       current: current ? { label: `${current.creator} / ${current.objectName} / ${current.filename}`, size: current.size } : null,
       lastEvent: state.lastEvent,
@@ -257,7 +265,14 @@ export function createBridge(cfg, {
     'POST /next': () => exclusive(next),
     'POST /report': (body) => exclusive(() => report(body)),
     'POST /pause': () => { pause('Paused from Chrome.'); return { ok: true }; },
-    'POST /resume': () => { state.paused = false; state.pauseReason = null; return { ok: true }; },
+    // Start: un-pause and (re)open a batch with everything currently selected.
+    'POST /resume': () => exclusive(async () => {
+      state.paused = false;
+      state.pauseReason = null;
+      await syncQueue();
+      if (startBatch(queue, now())) await save();
+      return { ok: true, batch: batchSummary(queue) };
+    }),
     'GET /tree': () => exclusive(async () => { await syncQueue(); return { tree: buildTree(queue) }; }),
     'POST /skip': ({ objectIds, skip }) => exclusive(async () => {
       if (!Array.isArray(objectIds) || typeof skip !== 'boolean') return { ok: false, error: 'Expected { objectIds: [...], skip: true|false }' };

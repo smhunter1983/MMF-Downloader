@@ -38,15 +38,21 @@ async function refreshStatus() {
     return;
   }
   const sum = st.summary;
-  const pct = sum.total ? (100 * sum.done) / sum.total : 0;
+  $('start').disabled = s.running || (!st.batch && !st.upcoming.files);
+  // The bar, file count, GB and ETA follow the current batch (what Start set
+  // going). Between batches they show what the next Start would download.
+  const b = st.batch ?? { total: st.upcoming.files, done: 0, failed: 0, bytesTotal: st.upcoming.bytes, bytesDone: 0 };
+  const pct = b.total ? (100 * b.done) / b.total : 0;
   $('fill').style.width = `${pct.toFixed(1)}%`;
-  $('count').textContent = `${sum.done.toLocaleString()} / ${sum.total.toLocaleString()}`;
-  $('bytes').textContent = `${fmt(sum.bytesDone)} / ${fmt(sum.bytesTotal)}`;
-  $('skippedStat').textContent = sum.skipped ? `${sum.skipped.toLocaleString()} skipped (${fmt(sum.bytesSkipped)})` : '';
+  $('count').textContent = `${b.done.toLocaleString()} / ${b.total.toLocaleString()}`;
+  $('countLabel').textContent = st.batch ? ' files this batch' : ' files selected';
+  $('bytes').textContent = `${fmt(b.bytesDone)} / ${fmt(b.bytesTotal)}`;
+  $('archiveStat').textContent = `Archive: ${sum.done.toLocaleString()} files done`;
+  $('skippedStat').textContent = sum.skipped ? `${sum.skipped.toLocaleString()} unchecked (${fmt(sum.bytesSkipped)})` : '';
   $('rate').textContent = `${st.rate.inLastHour}/${st.rate.cap} this hour`;
   $('rate').classList.toggle('atcap', st.rate.inLastHour >= st.rate.cap);
   // Rough time left: the hourly cap usually sets the pace.
-  const left = sum.pending + sum.active;
+  const left = b.total - b.done - b.failed;
   $('eta').textContent = left ? `~${etaText(left / st.rate.cap)} left at ${st.rate.cap}/h` : '';
   $('failed').textContent = sum.failed ? `${sum.failed} failed` : '';
   $('retry').classList.toggle('hidden', !sum.failed);
@@ -60,6 +66,11 @@ async function refreshStatus() {
   const waiting = sum.pending + sum.active;
   if (!st.paused && !s.running && waiting) text = `Ready: ${waiting.toLocaleString()} file${waiting === 1 ? '' : 's'} to download. Press Start.`;
   if (!st.paused && st.current && s.running) text = `Downloading ${st.current.label} (${fmt(st.current.size || 0)})`;
+  if (!st.batch && !st.upcoming.files && !st.paused && st.lastBatch) {
+    const lb = st.lastBatch;
+    const when = new Date(lb.finishedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    text = `Last batch done ✓ ${lb.files.toLocaleString()} file${lb.files === 1 ? '' : 's'}, ${fmt(lb.bytes)} (finished ${when})${lb.failed ? `, ${lb.failed} failed` : ''}. Check more models to start another.`;
+  }
   if (!sum.total && !sum.skipped) text = `${s.message}\nNo download queue yet: click "Sync library", then run "node mmf.js plan".`;
   $('msg').textContent = text;
   $('msg').className = st.paused || waitingForCap ? 'msg warn' : 'msg';

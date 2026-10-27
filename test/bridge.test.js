@@ -420,3 +420,36 @@ test('pinWindow validates the title and only runs a fixed script on Windows', as
   const notFound = (c, a, o, cb) => cb(null, 'NOT_FOUND');
   assert.equal((await pinWindow('MMF-PIN-abc12345', false, { platform: 'win32', run: notFound })).ok, false);
 });
+
+test('batches: Start opens one, mid-run selections join, it closes and resets when done', async (t) => {
+  const items = [...ITEMS, { key: '2:20', objectId: 2, fileId: 20, objectName: 'Solo', creator: 'Rescale', url: 'u', filename: 'S.zip', size: zipA.length, dest: ['Rescale', 'X'] }];
+  const { call, staging } = await setupBridge(t, { items });
+  await call('/skip', { objectIds: [2], skip: true });
+  let st = (await call('/status')).body;
+  assert.equal(st.batch, null);
+  assert.equal(st.upcoming.files, 2, 'preview of the next batch');
+
+  await call('/resume', {});
+  st = (await call('/status')).body;
+  assert.deepEqual([st.batch.done, st.batch.total], [0, 2]);
+
+  const deliver = async (n, data) => {
+    const f = path.join(staging, `${n.item.key.replace(':', '_')}.zip`);
+    await writeFile(f, data);
+    return call('/report', { key: n.item.key, ok: true, path: f });
+  };
+  await deliver((await call('/next', {})).body, zipA);
+  await call('/skip', { objectIds: [2], skip: false }); // checked mid-run: joins the batch
+  await deliver((await call('/next', {})).body, zipB);
+  await deliver((await call('/next', {})).body, zipA);
+  st = (await call('/status')).body;
+  assert.deepEqual([st.batch.done, st.batch.total], [3, 3]);
+
+  assert.equal((await call('/next', {})).body.action, 'done');
+  st = (await call('/status')).body;
+  assert.equal(st.batch, null, 'batch closed: the bar resets');
+  assert.equal(st.lastBatch.files, 3);
+  assert.equal(st.lastBatch.bytes, zipA.length * 2 + zipB.length);
+  assert.equal(st.upcoming.files, 0);
+  assert.equal(st.summary.done, 3, 'archive-wide count keeps everything');
+});
