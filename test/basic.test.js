@@ -82,16 +82,36 @@ test('importLibrary writes entries and applyExclusions filters creators', async 
 });
 
 test('itemsForObject + resolveNameClashes', () => {
-  const obj = { files: { items: [
-    { id: 10, filename: 'Supported.zip', size: '100', download_url: 'https://www.myminifactory.com/download/1?archive_id=10' },
+  const url = 'https://www.myminifactory.com/download/1?archive_id=1';
+  const obj = (ids) => ({ files: { items: ids.map(([id, name, size]) => ({ id, filename: name, size: String(size), download_url: url })) } });
+  const a = itemsForObject({ id: 1, name: 'A', creator: 'X' }, { files: { items: [
+    { id: 10, filename: 'Supported.zip', size: '100', download_url: url },
+    { id: 12, filename: 'Unsupported.zip', size: '90', download_url: url },
     { id: 11, filename: 'No URL.zip', size: '5' },
-  ] } };
-  const a = itemsForObject({ id: 1, name: 'A', creator: 'X' }, obj, ['X', 'B']);
-  const b = itemsForObject({ id: 2, name: 'B', creator: 'X' }, { files: { items: [{ id: 20, filename: 'Supported.zip', size: '7', download_url: 'u' }] } }, ['X', 'B']);
-  assert.equal(a.length, 1, 'files without a download_url are skipped');
+  ] } }, ['X', 'B']);
+  const b = itemsForObject({ id: 2, name: 'B', creator: 'X' }, obj([[20, 'Supported.zip', 7], [21, 'Lychee.zip', 8]]), ['X', 'B']);
+  assert.equal(a.length, 2, 'files without a download_url are skipped');
   assert.equal(a[0].size, 100);
   const items = resolveNameClashes([...a, ...b]);
-  assert.deepEqual(items.map((i) => i.filename), ['Supported [1].zip', 'Supported [2].zip']);
+  assert.deepEqual(items.map((i) => i.filename), ['Supported [1].zip', 'Unsupported.zip', 'Supported [2].zip', 'Lychee.zip']);
+});
+
+test('single-file models are named after the MMF page title (keeps race/class)', () => {
+  const url = 'https://www.myminifactory.com/download/9?archive_id=9';
+  const [kevin] = itemsForObject({ id: 9, name: 'Kevin Bightwood - Half-orc Barbarian', creator: 'Artificers_Mini' },
+    { files: { items: [{ id: 1, filename: 'Kevin Brightwood.zip', size: '50', download_url: url }] } }, ['Artificers_Mini', 'Welcome Pack']);
+  assert.equal(kevin.filename, 'Kevin Bightwood - Half-orc Barbarian.zip');
+  assert.equal(kevin.originalFilename, 'Kevin Brightwood.zip');
+  const pair = itemsForObject({ id: 8, name: 'Wendigo', creator: 'Rescale' },
+    { files: { items: [{ id: 1, filename: 'Wendigo_Supports.zip', size: '5', download_url: url }, { id: 2, filename: 'Wendigo_Unsupported.zip', size: '6', download_url: url }] } }, ['R', 'X']);
+  assert.deepEqual(pair.map((i) => i.filename), ['Wendigo_Supports.zip', 'Wendigo_Unsupported.zip'], 'multi-file models keep creator names');
+  // A solo listing renamed after its title still dedupes against the bundle's copy.
+  const bundle = itemsForObject({ id: 7, name: 'Release: Duskhelm', creator: 'Rescale' },
+    { files: { items: [{ id: 3, filename: 'Wendigo_Supports.zip', size: '5', download_url: url }, { id: 4, filename: 'Other.zip', size: '1', download_url: url }] } }, ['R', 'X']);
+  const solo = itemsForObject({ id: 6, name: 'Wendigo Supported', creator: 'Rescale' },
+    { files: { items: [{ id: 5, filename: 'Wendigo_Supports.zip', size: '5', download_url: url }] } }, ['R', 'X']);
+  assert.equal(solo[0].filename, 'Wendigo Supported.zip');
+  assert.equal(dedupeItems([...solo, ...bundle]).dupes, 1);
 });
 
 test('dedupeItems keeps one copy of a model sold both in a bundle and alone', () => {
@@ -151,4 +171,25 @@ test('loose-parts-only models become one whole-model zip; archives and PDFs stay
   assert.deepEqual(loose[0].replaces, ['a.stl', 'b.lys']);
   assert.equal(itemsForObject(entry, { files: { items: [dl('a.zip'), dl('b.rar')] } }, ['R', 'F']).length, 2);
   assert.equal(itemsForObject(entry, { files: { items: [dl('book1.pdf'), dl('book22.pdf')] } }, ['R', 'F']).length, 2);
+});
+
+test('API refreshes the login once on a 401, then retries', async (t) => {
+  const http = await import('node:http');
+  const { createApi } = await import('../src/api.js');
+  const seen = [];
+  const server = http.createServer((req, res) => {
+    seen.push(req.headers.authorization);
+    if (req.headers.authorization === 'Bearer old') { res.writeHead(401); return res.end('{}'); }
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end('{"ok":true}');
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  t.after(() => server.close());
+  const realFetch = globalThis.fetch;
+  const port = server.address().port;
+  globalThis.fetch = (url, init) => realFetch(String(url).replace('https://www.myminifactory.com', `http://127.0.0.1:${port}`), init);
+  t.after(() => { globalThis.fetch = realFetch; });
+  const api = createApi({ apiDelayMs: 0 }, { log: () => {}, getAccessToken: async (cfg, o) => (o?.force ? 'new' : 'old') });
+  assert.deepEqual(await api.get('/user'), { ok: true });
+  assert.deepEqual(seen, ['Bearer old', 'Bearer new']);
 });

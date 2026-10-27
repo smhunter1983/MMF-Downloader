@@ -124,10 +124,11 @@ export async function login(cfg) {
   return saved;
 }
 
-export async function getAccessToken(cfg) {
+// force: refresh even if the token looks valid (MMF sometimes revokes early).
+export async function getAccessToken(cfg, { force = false } = {}) {
   const tokens = await readJson(TOKENS_PATH);
   if (!tokens?.access_token) throw new Error('Not logged in. Run: node mmf.js login');
-  if (tokens.expires_at > nowS()) return tokens.access_token;
+  if (!force && tokens.expires_at > nowS()) return tokens.access_token;
   if (!tokens.refresh_token) throw new Error('Access token expired and no refresh token stored. Run: node mmf.js login');
   const t = await postToken(cfg, { grant_type: 'refresh_token', refresh_token: tokens.refresh_token });
   return (await saveTokens(t, tokens)).access_token;

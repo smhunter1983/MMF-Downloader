@@ -67,18 +67,29 @@ export function itemsForObject(entry, obj, dest) {
     }];
   }
 
-  return files.map((f) => ({
+  // A model with a single file is named after its MMF page title, which keeps
+  // details the creator's filename drops ("Kevin Brightwood.zip" becomes
+  // "Kevin Bightwood - Half-orc Barbarian.zip"). Multi-file models keep the
+  // creator's names (Supported/Unsupported etc.).
+  const single = files.length === 1;
+  return files.map((f) => {
+    const original = safeName(f.filename ?? f.path ?? `${f.id}.zip`, 180);
+    const ext = path.extname(original);
+    const filename = single && entry.name ? safeName(`${entry.name}${ext}`, 180) : original;
+    return {
       key: `${entry.id}:${f.id}`,
       objectId: entry.id,
       fileId: f.id,
       objectName: entry.name,
       creator: entry.creator,
       url: f.download_url,
-      filename: safeName(f.filename ?? f.path ?? `${f.id}.zip`, 180),
+      filename,
+      originalFilename: original,
       size: Number(f.size) || null,
       dest,
       objectFileCount: files.length,
-    }));
+    };
+  });
 }
 
 // Creators often sell a full release bundle AND each model on its own, with
@@ -89,7 +100,7 @@ export function dedupeItems(items) {
   const groups = new Map();
   for (const it of items) {
     if (!it.size) { groups.set(Symbol('unsized'), [it]); continue; }
-    const k = `${it.creator}\u0000${it.filename.toLowerCase()}\u0000${it.size}`;
+    const k = `${it.creator}\u0000${(it.originalFilename ?? it.filename).toLowerCase()}\u0000${it.size}`;
     if (!groups.has(k)) groups.set(k, []);
     groups.get(k).push(it);
   }
