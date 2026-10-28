@@ -19,6 +19,32 @@ async function bridge(pathname, body) {
   return res.json();
 }
 
+// ---------- start bridge (native messaging helper) ----------
+
+const HOST_NAME = 'com.mmf_downloader.bridge';
+let startingBridge = false;
+let bridgeError = null;
+
+async function startBridge() {
+  if (startingBridge) return;
+  startingBridge = true;
+  $('startBridge').disabled = true;
+  $('msg').textContent = 'Starting the bridge... (a "MMF Downloader bridge" window will open)';
+  $('msg').className = 'msg';
+  try {
+    const r = await chrome.runtime.sendNativeMessage(HOST_NAME, { cmd: 'startBridge' });
+    bridgeError = r?.ok ? null : `Couldn't start the bridge: ${r?.error ?? 'no reply'}`;
+  } catch (err) {
+    bridgeError = /not found|forbidden/i.test(err.message)
+      ? 'One-time setup needed for this button: in the MMF Downloader folder run  node mmf.js install-host  then reload the extension. (Or start it by hand: node mmf.js serve)'
+      : `Couldn't start the bridge: ${err.message}`;
+  } finally {
+    startingBridge = false;
+    $('startBridge').disabled = false;
+    await refreshStatus();
+  }
+}
+
 // ---------- status header ----------
 
 async function refreshStatus() {
@@ -32,11 +58,15 @@ async function refreshStatus() {
   $('sync').disabled = !st;
   document.documentElement.style.setProperty('--header-h', `${$('header').offsetHeight}px`);
 
+  $('startBridge').classList.toggle('hidden', !!st);
   if (!st) {
-    $('msg').textContent = 'Bridge offline. In the MMF Downloader folder run:  node mmf.js serve';
-    $('msg').className = 'msg warn';
+    if (!startingBridge) {
+      $('msg').textContent = bridgeError ?? 'Bridge offline. Click "Start bridge", or in the MMF Downloader folder run:  node mmf.js serve';
+      $('msg').className = 'msg warn';
+    }
     return;
   }
+  bridgeError = null;
   const sum = st.summary;
   $('start').disabled = s.running || (!st.batch && !st.upcoming.files);
   // The bar, file count, GB and ETA follow the current batch (what Start set
@@ -255,6 +285,7 @@ $('pin').onclick = () => setPinned(!$('pin').classList.contains('on'));
 
 $('start').onclick = async () => { await chrome.runtime.sendMessage({ cmd: 'start' }); refreshStatus(); };
 $('pause').onclick = async () => { await chrome.runtime.sendMessage({ cmd: 'pause' }); refreshStatus(); };
+$('startBridge').onclick = async () => { await startBridge(); if (!bridgeError) loadTree(); };
 $('retry').onclick = async () => { await chrome.runtime.sendMessage({ cmd: 'retryFailed' }); refreshStatus(); loadTree(); };
 $('sync').onclick = async () => {
   $('sync').disabled = true;

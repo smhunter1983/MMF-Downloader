@@ -9,6 +9,7 @@ import { importLibrary, loadLibrary, applyExclusions, deriveGroupTitles, bundleF
 import { buildPlan } from './src/plan.js';
 import { loadQueue, summarize } from './src/queue.js';
 import { createBridge } from './src/bridge.js';
+import { installHost } from './src/install-host.js';
 
 const HELP = `
 MMF Downloader
@@ -22,6 +23,8 @@ MMF Downloader
                                     (re-run any time: it also finds gaps)
   node mmf.js serve                 Start the bridge for the Chrome extension
   node mmf.js status                Show queue progress
+  node mmf.js install-host [id]     One-time: enable the dashboard's "Start bridge"
+                                    button (Windows, current user only)
 
 Library list: while logged in to MMF in Chrome, open
   ${LIBRARY_URL}
@@ -117,6 +120,7 @@ async function main() {
   }
   if (cmd === 'status') return printSummary(await loadQueue());
   if (cmd === 'bundles') return cmdBundles();
+  if (cmd === 'install-host') return installHost({ extraIds: rest });
 
   const cfg = await loadConfig();
   if (cmd === 'login') {
