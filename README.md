@@ -13,7 +13,13 @@ through **your real Chrome** (via a small extension). Everything else
    downloads file ──> Downloads\MMF-staging ──> verified ──> archive\Creator\Bundle\
 ```
 
-Node 20+, no npm dependencies.
+Requirements: Windows (what it is tested on), Chrome, Node 20+ (no npm dependencies), a MyMiniFactory
+account with a password (see step 3), and enough disk space for your library.
+The core also runs on macOS/Linux, but the "Start bridge" button, 📌 pin and
+"show in Explorer" extras are Windows-only.
+
+Download: green **Code** button → **Download ZIP** on GitHub, unzip anywhere
+(or `git clone`).
 
 ## One-time setup
 
@@ -31,10 +37,16 @@ Node 20+, no npm dependencies.
 4. Chrome → `chrome://extensions` → turn on **Developer mode** → **Load unpacked**
    → pick the `extension` folder. Pin "MMF Downloader" to the toolbar; clicking it
    opens the floating dashboard (📌 keeps it on top, Windows).
+5. `node mmf.js install-host` (optional, Windows): adds a **Start bridge** button
+   to the dashboard so you don't need a terminal to start the bridge. It
+   registers a small Chrome helper for your Windows user only (no admin); only
+   this extension can call it, and all it can do is open the bridge window.
+   Reload the extension afterwards. Re-run it if you move the folder.
 
 ## Each run
 
-1. `node mmf.js serve` and leave it running.
+1. `node mmf.js serve` and leave it running (or click **Start bridge** in the
+   dashboard if you ran `install-host`).
 2. Chrome toolbar → MMF Downloader → dashboard → **Sync library** (pulls your
    library list and release names through your logged-in Chrome; read-only).
 3. `node mmf.js bundles` to preview the Creator\Bundle folders (optional).
@@ -48,6 +60,23 @@ Node 20+, no npm dependencies.
    Choices are remembered across re-plans and can be changed mid-run.
 
 `node mmf.js status` shows progress any time. Stop/start freely; it resumes.
+
+**Long runs:** a big library takes a day or more (the hourly cap sets the pace).
+Keep Chrome and the bridge window open, stop the PC from sleeping, and consider
+pausing Windows Update for the run (Settings → Windows Update → Pause), since an
+update restart stops it. After any restart: **Start bridge**, then **Start**.
+Nothing already filed is downloaded again.
+
+## Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| "Bridge offline" | Click **Start bridge**, or run `node mmf.js serve` |
+| "Paused: Got a web page instead of the file" | Open myminifactory.com in Chrome, log in / pass the check, press **Start** |
+| `plan` says 401 / not logged in | `node mmf.js login` |
+| Start bridge says "one-time setup needed" | `node mmf.js install-host`, then reload the extension |
+| Some files failed | Dashboard → **Retry failed** |
+| Files you added by hand get downloaded again | Run `node mmf.js plan` first; it marks files already on disk as done |
 
 ## Settings (config.local.json)
 
@@ -86,6 +115,8 @@ else the creator's release name as MMF shows it (synced by the extension, e.g.
 
 ## Status
 
-Personal project, private for now. Uses MMF's official API plus a few of the
-website's own library endpoints (read through your logged-in browser), which
-may change without notice.
+Personal hobby project, not affiliated with MyMiniFactory. Use it only for
+models you own, and respect creators' licences. It uses MMF's official API plus
+a few of the website's own library endpoints (read through your logged-in
+browser), which may change without notice. Downloads are deliberately paced
+(120/hour by default) to be gentle on MMF.
