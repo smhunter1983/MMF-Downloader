@@ -162,8 +162,29 @@ chrome.action.onClicked.addListener(async () => {
       return;
     } catch { /* window was closed */ }
   }
-  const win = await chrome.windows.create({ url: 'dashboard.html', type: 'popup', width: 820, height: 900, focused: true });
+  const { width, height } = await dashboardSize();
+  const win = await chrome.windows.create({ url: 'dashboard.html', type: 'popup', width, height, focused: true });
   await chrome.storage.session.set({ dashboardWindowId: win.id });
+});
+
+// The dashboard reopens at whatever size it was last left at.
+const DEFAULT_SIZE = { width: 1060, height: 900 };
+const MIN_SIZE = { width: 480, height: 400 };
+const MAX_SIZE = { width: 4000, height: 3000 };
+const clamp = (n, lo, hi, fallback) => (Number.isFinite(n) ? Math.min(hi, Math.max(lo, Math.round(n))) : fallback);
+
+async function dashboardSize() {
+  const { dashboardSize: s } = await chrome.storage.local.get('dashboardSize');
+  return {
+    width: clamp(s?.width, MIN_SIZE.width, MAX_SIZE.width, DEFAULT_SIZE.width),
+    height: clamp(s?.height, MIN_SIZE.height, MAX_SIZE.height, DEFAULT_SIZE.height),
+  };
+}
+
+chrome.windows.onBoundsChanged?.addListener(async (win) => {
+  const { dashboardWindowId } = await chrome.storage.session.get('dashboardWindowId');
+  if (win.id !== dashboardWindowId || win.state !== 'normal') return;
+  await chrome.storage.local.set({ dashboardSize: { width: win.width, height: win.height } });
 });
 chrome.runtime.onInstalled.addListener(ensureWatchdog);
 chrome.runtime.onStartup.addListener(ensureWatchdog);
