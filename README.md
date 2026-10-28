@@ -120,3 +120,7 @@ models you own, and respect creators' licences. It uses MMF's official API plus
 a few of the website's own library endpoints (read through your logged-in
 browser), which may change without notice. Downloads are deliberately paced
 (120/hour by default) to be gentle on MMF.
+
+## License
+
+MIT (see [LICENSE](LICENSE)). Provided as is, with no warranty.
