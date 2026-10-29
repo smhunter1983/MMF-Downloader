@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.2 (2026-10-28)
+
+- History: filter by creator (dropdown, or click a creator's name); totals
+  follow the chosen creator; covers the whole log, not just the last 500.
+
 ## 1.0.1 (2026-10-28)
 
 - **Sync library** now also builds the download list (no more "run node mmf.js

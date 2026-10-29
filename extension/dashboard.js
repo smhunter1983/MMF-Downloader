@@ -337,8 +337,11 @@ function historyLine(e) {
   if (e.type === 'start') return [`Started downloading ${plural(e.files ?? 0, 'file')}`, e.bytes ? fmt(e.bytes) : ''];
   if (e.type === 'batch') return [`Batch finished: ${plural(e.files ?? 0, 'file')}${e.failed ? `, ${e.failed} failed` : ''}`, e.bytes ? fmt(e.bytes) : ''];
   if (e.type === 'pause') return ['Paused', e.reason ?? ''];
-  const where = [e.creator, e.model].filter(Boolean).join(' / ');
-  const what = `${esc(e.file ?? '?')}${where ? ` <small>· ${esc(where)}</small>` : ''}`;
+  const where = [
+    e.creator ? `<span class="creator" title="Show only ${esc(e.creator)}">${esc(e.creator)}</span>` : '',
+    e.model ? esc(e.model) : '',
+  ].filter(Boolean).join(' / ');
+  const what = `${esc(e.file ?? '?')}${where ? ` <small>· ${where}</small>` : ''}`;
   if (e.type === 'done') return [what, e.bytes ? fmt(e.bytes) : '', true];
   return [what, e.type === 'retry' ? `will retry: ${e.reason ?? ''}` : (e.reason ?? 'failed'), true];
 }
@@ -346,13 +349,19 @@ function historyLine(e) {
 function renderHistory() {
   const box = $('history');
   const q = filter.toLowerCase();
-  const shown = history.filter(HFILTER[$('histFilter').value]).filter((e) => !q
+  const creator = $('histCreator').value;
+  // Totals cover the chosen creator (or everyone); type and search narrow the rows.
+  const scope = creator ? history.filter((e) => e.creator === creator) : history;
+  const shown = scope.filter(HFILTER[$('histFilter').value]).filter((e) => !q
     || [e.file, e.model, e.creator, e.reason].some((v) => v && v.toLowerCase().includes(q)));
-  const done = history.filter((e) => e.type === 'done');
-  const failed = history.filter((e) => e.type === 'fail').length;
-  $('selsum').textContent = history.length
-    ? `Last ${history.length.toLocaleString()} events · ${done.length.toLocaleString()} downloaded (${fmt(done.reduce((n, e) => n + (e.bytes ?? 0), 0))})${failed ? ` · ${failed} failed` : ''}${shown.length !== history.length ? ` · ${shown.length.toLocaleString()} shown` : ''}`
+  const done = scope.filter((e) => e.type === 'done');
+  const failed = scope.filter((e) => e.type === 'fail').length;
+  $('selsum').textContent = scope.length
+    ? `${creator ? `${creator}: ` : ''}${done.length.toLocaleString()} downloaded (${fmt(done.reduce((n, e) => n + (e.bytes ?? 0), 0))})${failed ? ` · ${failed} failed` : ''} · ${scope.length.toLocaleString()} events${shown.length !== scope.length ? ` · ${shown.length.toLocaleString()} shown` : ''}`
     : '';
+  const MAX_ROWS = 1000; // drawing more makes the window sluggish; filter to narrow
+  const extra = shown.length - MAX_ROWS;
+  if (extra > 0) shown.length = MAX_ROWS;
   if (!shown.length) { box.innerHTML = `<div class="empty">${history.length ? 'Nothing matches.' : 'No history yet.'}</div>`; return; }
   let day = '';
   const html = [];
@@ -369,15 +378,34 @@ function renderHistory() {
       + `<span class="what"${link ? ' title="Show in Explorer"' : ''}>${isFile ? what : esc(what)}</span>`
       + `<span class="meta" title="${esc(meta)}">${esc(meta)}</span></div>`);
   }
+  if (extra > 0) html.push(`<div class="empty">${extra.toLocaleString()} older entries not shown. Pick a creator or type a filter to narrow it down.</div>`);
   box.innerHTML = html.join('');
   box.querySelectorAll('.hrow.link .what').forEach((el) => {
     const e = shown[Number(el.parentElement.dataset.n)];
     el.onclick = () => reveal({ objectId: e.objectId });
   });
+  box.querySelectorAll('.hrow .creator').forEach((el) => {
+    el.onclick = (ev) => {
+      ev.stopPropagation(); // not "show in Explorer"
+      $('histCreator').value = el.textContent;
+      renderHistory();
+    };
+  });
+}
+
+// Creator dropdown: everyone who appears in the history, keeping the choice.
+function fillCreators() {
+  const sel = $('histCreator');
+  const keep = sel.value;
+  const names = [...new Set(history.map((e) => e.creator).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  if (keep && !names.includes(keep)) names.unshift(keep);
+  sel.innerHTML = '<option value="">All creators</option>' + names.map((n) => `<option>${esc(n)}</option>`).join('');
+  sel.value = keep;
 }
 
 async function loadHistory() {
   try { history = (await bridge('/history')).events; } catch { history = []; }
+  fillCreators();
   renderHistory();
 }
 
@@ -387,6 +415,7 @@ function setHistoryMode(on) {
   $('historyBtn').textContent = on ? 'Back to library' : 'History';
   for (const id of ['getAll', 'skipAll', 'expand']) $(id).classList.toggle('hidden', on);
   $('histFilter').classList.toggle('hidden', !on);
+  $('histCreator').classList.toggle('hidden', !on);
   $('tree').classList.toggle('hidden', on);
   $('history').classList.toggle('hidden', !on);
   $('search').placeholder = on ? 'Filter history...' : 'Filter creators, releases, models...';
@@ -394,6 +423,7 @@ function setHistoryMode(on) {
 }
 $('historyBtn').onclick = () => setHistoryMode(!historyMode);
 $('histFilter').onchange = renderHistory;
+$('histCreator').onchange = renderHistory;
 
 // The tree (or history) refreshes every few seconds during a run, otherwise every 30s.
 let lastTree = 0;

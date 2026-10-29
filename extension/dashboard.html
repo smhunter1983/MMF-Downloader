@@ -73,6 +73,7 @@
   .hrow.retry .icon, .hrow.pause .icon { color: var(--warn); }
   .hrow.run { font-weight: 600; }
   .hrow.link .what { cursor: pointer; }
+  .hrow .creator { cursor: pointer; } .hrow .creator:hover { text-decoration: underline; color: var(--text); }
   .hrow.link .what:hover { text-decoration: underline dotted; text-underline-offset: 3px; }
   input[type=checkbox] { accent-color: var(--accent); width: 15px; height: 15px; margin: 0; cursor: pointer; }
 </style>
@@ -106,6 +107,7 @@
     <button id="skipAll" title="Uncheck (Skip) everything shown; with a filter, only what matches">Uncheck all</button>
     <button id="expand">Expand</button>
     <button id="retry" class="hidden">Retry failed</button>
+    <select id="histCreator" class="hidden" title="Only this creator"><option value="">All creators</option></select>
     <select id="histFilter" class="hidden" title="Which history to show">
       <option value="all">All</option><option value="done">Downloaded</option>
       <option value="problems">Failed &amp; retries</option><option value="runs">Runs &amp; pauses</option>
