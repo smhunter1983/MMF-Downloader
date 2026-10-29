@@ -58,6 +58,22 @@
   .skipped > .row .name, .skipped > .row .meta { opacity: .5; text-decoration: line-through; }
   .hidden { display: none; }
   .empty { padding: 30px 16px; color: var(--muted); text-align: center; }
+  #historyBtn.on { border-color: var(--accent); background: var(--row-hover); }
+  select { font: inherit; padding: 6px 8px; border-radius: 7px; border: 1px solid var(--line); background: var(--panel); color: var(--text); }
+  .history { padding: 6px 8px 40px; }
+  .hday { color: var(--muted); font-size: 12px; font-weight: 600; padding: 12px 8px 4px; }
+  .hrow { display: grid; grid-template-columns: 64px 18px 1fr auto; align-items: center; gap: 8px; padding: 4px 8px; border-radius: 6px; }
+  .hrow:hover { background: var(--row-hover); }
+  .hrow .time, .hrow .meta { color: var(--muted); font-size: 12px; white-space: nowrap; }
+  .hrow .meta { text-align: right; max-width: 280px; overflow: hidden; text-overflow: ellipsis; }
+  .hrow .what { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hrow .what small { color: var(--muted); }
+  .hrow .icon { text-align: center; }
+  .hrow.done .icon { color: var(--accent); } .hrow.fail .icon { color: var(--bad); }
+  .hrow.retry .icon, .hrow.pause .icon { color: var(--warn); }
+  .hrow.run { font-weight: 600; }
+  .hrow.link .what { cursor: pointer; }
+  .hrow.link .what:hover { text-decoration: underline dotted; text-underline-offset: 3px; }
   input[type=checkbox] { accent-color: var(--accent); width: 15px; height: 15px; margin: 0; cursor: pointer; }
 </style>
 </head>
@@ -89,9 +105,15 @@
     <button id="skipAll" title="Uncheck (Skip) everything shown; with a filter, only what matches">Uncheck all</button>
     <button id="expand">Expand</button>
     <button id="retry" class="hidden">Retry failed</button>
+    <select id="histFilter" class="hidden" title="Which history to show">
+      <option value="all">All</option><option value="done">Downloaded</option>
+      <option value="problems">Failed &amp; retries</option><option value="runs">Runs &amp; pauses</option>
+    </select>
+    <button id="historyBtn" title="What was downloaded or failed, and when">History</button>
   </div>
   <div class="selsum" id="selsum"></div>
   <div class="tree" id="tree"></div>
+  <div class="history hidden" id="history"></div>
   <script src="dashboard.js"></script>
 </body>
 </html>

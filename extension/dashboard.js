@@ -6,8 +6,10 @@ const $ = (id) => document.getElementById(id);
 const expanded = new Set(); // "c:<creator>" and "b:<creator>/<bundle>"
 let tree = [];
 let filter = '';
+let historyMode = false;
+let history = [];
 
-const fmt = (b) => (b >= 1073741824 ? `${(b / 1073741824).toFixed(1)} GB` : `${(b / 1048576).toFixed(0)} MB`);
+const fmt = (b) => (b >= 1073741824 ? `${(b / 1073741824).toFixed(1)} GB` : b >= 1048576 || !b ? `${(b / 1048576).toFixed(0)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`);
 
 async function bridge(pathname, body) {
   const res = await fetch(`${BRIDGE}${pathname}`, {
@@ -218,6 +220,7 @@ function filteredTree() {
 const visibleObjects = () => filteredTree().flatMap((c) => c.bundles.flatMap((b) => b.objects));
 
 function renderTree() {
+  if (historyMode) return; // the History panel owns the summary line
   const root = $('tree');
   root.textContent = '';
   if (!tree.length) {
@@ -294,7 +297,7 @@ $('sync').onclick = async () => {
   $('sync').textContent = 'Sync library';
   refreshStatus();
 };
-$('search').oninput = (e) => { filter = e.target.value.trim().toLowerCase(); renderTree(); };
+$('search').oninput = (e) => { filter = e.target.value.trim().toLowerCase(); historyMode ? renderHistory() : renderTree(); };
 $('getAll').onclick = () => setSkip(visibleObjects(), false);
 $('skipAll').onclick = () => setSkip(visibleObjects(), true);
 $('expand').onclick = () => {
@@ -305,14 +308,96 @@ $('expand').onclick = () => {
   renderTree();
 };
 
-// The tree refreshes every few seconds during a run, otherwise every 30s.
+// ---------- history ----------
+
+
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const HKIND = {
+  done: { icon: '✓', cls: 'done' },
+  fail: { icon: '✗', cls: 'fail' },
+  retry: { icon: '↻', cls: 'retry' },
+  pause: { icon: '⏸', cls: 'pause' },
+  start: { icon: '▶', cls: 'run' },
+  batch: { icon: '■', cls: 'run' },
+};
+const HFILTER = {
+  all: () => true,
+  done: (e) => e.type === 'done',
+  problems: (e) => e.type === 'fail' || e.type === 'retry',
+  runs: (e) => e.type === 'start' || e.type === 'batch' || e.type === 'pause',
+};
+
+function historyLine(e) {
+  const plural = (n, w) => `${n.toLocaleString()} ${w}${n === 1 ? '' : 's'}`;
+  if (e.type === 'start') return [`Started downloading ${plural(e.files ?? 0, 'file')}`, e.bytes ? fmt(e.bytes) : ''];
+  if (e.type === 'batch') return [`Batch finished: ${plural(e.files ?? 0, 'file')}${e.failed ? `, ${e.failed} failed` : ''}`, e.bytes ? fmt(e.bytes) : ''];
+  if (e.type === 'pause') return ['Paused', e.reason ?? ''];
+  const where = [e.creator, e.model].filter(Boolean).join(' / ');
+  const what = `${esc(e.file ?? '?')}${where ? ` <small>· ${esc(where)}</small>` : ''}`;
+  if (e.type === 'done') return [what, e.bytes ? fmt(e.bytes) : '', true];
+  return [what, e.type === 'retry' ? `will retry: ${e.reason ?? ''}` : (e.reason ?? 'failed'), true];
+}
+
+function renderHistory() {
+  const box = $('history');
+  const q = filter.toLowerCase();
+  const shown = history.filter(HFILTER[$('histFilter').value]).filter((e) => !q
+    || [e.file, e.model, e.creator, e.reason].some((v) => v && v.toLowerCase().includes(q)));
+  const done = history.filter((e) => e.type === 'done');
+  const failed = history.filter((e) => e.type === 'fail').length;
+  $('selsum').textContent = history.length
+    ? `Last ${history.length.toLocaleString()} events · ${done.length.toLocaleString()} downloaded (${fmt(done.reduce((n, e) => n + (e.bytes ?? 0), 0))})${failed ? ` · ${failed} failed` : ''}${shown.length !== history.length ? ` · ${shown.length.toLocaleString()} shown` : ''}`
+    : '';
+  if (!shown.length) { box.innerHTML = `<div class="empty">${history.length ? 'Nothing matches.' : 'No history yet.'}</div>`; return; }
+  let day = '';
+  const html = [];
+  for (const [n, e] of shown.entries()) {
+    const d = new Date(e.t);
+    const dayLabel = d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+    if (dayLabel !== day) { day = dayLabel; html.push(`<div class="hday">${esc(dayLabel)}</div>`); }
+    const k = HKIND[e.type] ?? { icon: '·', cls: '' };
+    const [what, meta, isFile] = historyLine(e);
+    const link = e.type === 'done' && e.objectId != null;
+    html.push(`<div class="hrow ${k.cls}${link ? ' link' : ''}" data-n="${n}">`
+      + `<span class="time">${esc(d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }))}</span>`
+      + `<span class="icon">${k.icon}</span>`
+      + `<span class="what"${link ? ' title="Show in Explorer"' : ''}>${isFile ? what : esc(what)}</span>`
+      + `<span class="meta" title="${esc(meta)}">${esc(meta)}</span></div>`);
+  }
+  box.innerHTML = html.join('');
+  box.querySelectorAll('.hrow.link .what').forEach((el) => {
+    const e = shown[Number(el.parentElement.dataset.n)];
+    el.onclick = () => reveal({ objectId: e.objectId });
+  });
+}
+
+async function loadHistory() {
+  try { history = (await bridge('/history')).events; } catch { history = []; }
+  renderHistory();
+}
+
+function setHistoryMode(on) {
+  historyMode = on;
+  $('historyBtn').classList.toggle('on', on);
+  $('historyBtn').textContent = on ? 'Back to library' : 'History';
+  for (const id of ['getAll', 'skipAll', 'expand']) $(id).classList.toggle('hidden', on);
+  $('histFilter').classList.toggle('hidden', !on);
+  $('tree').classList.toggle('hidden', on);
+  $('history').classList.toggle('hidden', !on);
+  $('search').placeholder = on ? 'Filter history...' : 'Filter creators, releases, models...';
+  if (on) loadHistory(); else renderTree();
+}
+$('historyBtn').onclick = () => setHistoryMode(!historyMode);
+$('histFilter').onchange = renderHistory;
+
+// The tree (or history) refreshes every few seconds during a run, otherwise every 30s.
 let lastTree = 0;
 async function tick() {
   await refreshStatus();
   const { running } = await chrome.storage.local.get({ running: false });
   if (Date.now() - lastTree > (running ? 4000 : 30000)) {
     lastTree = Date.now();
-    loadTree();
+    historyMode ? loadHistory() : loadTree();
   }
 }
 loadTree();

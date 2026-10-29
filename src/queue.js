@@ -4,6 +4,7 @@
 import path from 'node:path';
 import { stat, mkdir, rename } from 'node:fs/promises';
 import { QUEUE_PATH, readJson, writeJson } from './config.js';
+import { findPacked, zipEntryCache } from './zipdir.js';
 
 export const STATUS = Object.freeze({
   PENDING: 'pending',
@@ -83,6 +84,7 @@ export async function mergeQueue(existing, planned, archiveRoot) {
     modelSkipped.set(i.objectId, (modelSkipped.get(i.objectId) ?? true) && i.skip === true);
   }
   const items = [];
+  const entriesOf = zipEntryCache();
   for (const p of planned) {
     const prev = old.get(p.key);
     const item = { ...p, status: STATUS.PENDING, attempts: 0, error: null, skip: modelSkipped.get(p.objectId) ?? false };
@@ -115,7 +117,16 @@ export async function mergeQueue(existing, planned, archiveRoot) {
     const known = Number(item.size) > 0;
     const filedSize = prev?.status === STATUS.DONE ? (prev.doneBytes ?? (prev.note ? onDisk : null)) : null;
     const matches = known ? onDisk === Number(item.size) : onDisk > 0;
-    if (onDisk !== null && onDisk > 0 && (matches || onDisk === filedSize)) {
+    // Or it was folded into a combined zip beside it ("X.zip" holding
+    // X_Supports.zip + X_Unsupported.zip; tools/Combine-RescalePairs.ps1).
+    const packed = onDisk > 0 && (matches || onDisk === filedSize)
+      ? null
+      : await findPacked(path.join(archiveRoot, ...item.dest), item, Number(item.size) || prev?.doneBytes, entriesOf);
+    if (packed) {
+      item.status = STATUS.DONE;
+      item.error = null;
+      item.packedIn = packed;
+    } else if (onDisk !== null && onDisk > 0 && (matches || onDisk === filedSize)) {
       item.status = STATUS.DONE;
       item.error = null;
     } else if (item.status === STATUS.DONE) {

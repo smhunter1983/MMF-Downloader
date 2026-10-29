@@ -60,12 +60,38 @@ Download: green **Code** button → **Download ZIP** on GitHub, unzip anywhere
    Choices are remembered across re-plans and can be changed mid-run.
 
 `node mmf.js status` shows progress any time. Stop/start freely; it resumes.
+**History** (dashboard toolbar) lists what was downloaded, retried or failed,
+and when runs started, paused and finished, newest first. Filter it, search it,
+and click a download to show it in Explorer.
 
 **Long runs:** a big library takes a day or more (the hourly cap sets the pace).
 Keep Chrome and the bridge window open, stop the PC from sleeping, and consider
 pausing Windows Update for the run (Settings → Windows Update → Pause), since an
 update restart stops it. After any restart: **Start bridge**, then **Start**.
 Nothing already filed is downloaded again.
+
+## Combining Rescale's Supported/Unsupported pairs (optional, Windows)
+
+Rescale Miniatures ships each creature as `X_Supports.zip` + `X_Unsupported.zip`.
+`tools\Combine-RescalePairs.ps1` folds each pair into one `X.zip` holding both
+zips unchanged (store mode, no recompression). Needs [7-Zip](https://www.7-zip.org/)
+and PowerShell 7 (`pwsh`).
+
+```
+pwsh -File tools\Combine-RescalePairs.ps1                      # dry run: shows the plan
+pwsh -File tools\Combine-RescalePairs.ps1 -Execute             # do it
+pwsh -File tools\Combine-RescalePairs.ps1 -Execute -Only "2025-0*"   # some releases
+```
+
+- Dry run by default. Each new zip is built as `.partial`, tested with `7z t`,
+  and checked entry by entry against the originals before it gets its name.
+- Originals are moved to `_combined_originals` in each release folder for you to
+  delete when happy (or add `-DeleteOriginals` to delete them after the checks).
+- Folders with files changed in the last hour are left alone (downloads running).
+- A stray `X.zip` beside a pair is removed only if it is byte-identical to
+  `X_Unsupported.zip`; anything unclear is listed for you to decide.
+- The downloader understands combined zips: re-running `plan` counts the files
+  inside them as done, and it never overwrites an existing file in the archive.
 
 ## Troubleshooting
 
@@ -76,6 +102,7 @@ Nothing already filed is downloaded again.
 | `plan` says 401 / not logged in | `node mmf.js login` |
 | Start bridge says "one-time setup needed" | `node mmf.js install-host`, then reload the extension |
 | Some files failed | Dashboard → **Retry failed** |
+| A whole-model download fails with "Not a zip" | Some very old models: download them by hand from their MMF page |
 | Files you added by hand get downloaded again | Run `node mmf.js plan` first; it marks files already on disk as done |
 
 ## Settings (config.local.json)
@@ -114,6 +141,8 @@ else the creator's release name as MMF shows it (synced by the extension, e.g.
 `npm test`
 
 ## Status
+
+**1.0** (October 2026): used to archive a 2,500-file, 1.9 TB library end to end.
 
 Personal hobby project, not affiliated with MyMiniFactory. Use it only for
 models you own, and respect creators' licences. It uses MMF's official API plus

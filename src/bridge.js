@@ -17,6 +17,7 @@ import {
 } from './queue.js';
 import { verifyDownload } from './verify.js';
 import { pinWindow } from './pin.js';
+import { readHistory } from './history.js';
 
 export const BRIDGE_HEADER = 'x-mmf-bridge';
 const HOUR_MS = 60 * 60 * 1000;
@@ -140,6 +141,7 @@ export function createBridge(cfg, {
     state.paused = true;
     state.pauseReason = reason;
     log(`PAUSED: ${reason}`);
+    logEvent({ type: 'pause', reason }).catch(() => {});
   }
 
   // Rolling window: at most maxDownloadsPerHour starts in any window.
@@ -166,7 +168,10 @@ export function createBridge(cfg, {
 
     const item = queue.items.find((i) => i.status === STATUS.PENDING && !i.skip);
     if (!item) {
-      finishBatchIfDone(queue, now());
+      const b = batchSummary(queue);
+      if (finishBatchIfDone(queue, now()) && b?.total) {
+        await logEvent({ type: 'batch', files: b.done, failed: b.failed, bytes: b.bytesDone });
+      }
       await save();
       return { action: 'done', summary: summarize(queue), lastBatch: queue.lastBatch ?? null };
     }
@@ -227,8 +232,15 @@ export function createBridge(cfg, {
     }
 
     const dest = finalPath(cfg.archiveRoot, item);
-    if ((await sizeOf(dest)) === v.bytes) {
+    const existing = await sizeOf(dest);
+    if (existing === v.bytes) {
       await rm(staged, { force: true });
+    } else if (existing !== null) {
+      // Never overwrite a different file in the archive (e.g. a combined zip
+      // that took this name). Keep the download in staging for a look.
+      item.attempts = MAX_ATTEMPTS;
+      await fail(item, `A different file is already at ${dest}; left it alone (download kept in staging)`, { countAttempt: false });
+      return { ok: true };
     } else {
       await moveFile(staged, dest);
     }
@@ -270,9 +282,12 @@ export function createBridge(cfg, {
       state.paused = false;
       state.pauseReason = null;
       await syncQueue();
+      const ahead = upcoming(queue);
       if (startBatch(queue, now())) await save();
+      if (ahead.files) await logEvent({ type: 'start', files: ahead.files, bytes: ahead.bytes });
       return { ok: true, batch: batchSummary(queue) };
     }),
+    'GET /history': () => exclusive(async () => { await syncQueue(); return { events: await readHistory(logFile, queue.items) }; }),
     'GET /tree': () => exclusive(async () => { await syncQueue(); return { tree: buildTree(queue) }; }),
     'POST /skip': ({ objectIds, skip }) => exclusive(async () => {
       if (!Array.isArray(objectIds) || typeof skip !== 'boolean') return { ok: false, error: 'Expected { objectIds: [...], skip: true|false }' };
@@ -291,7 +306,8 @@ export function createBridge(cfg, {
       if (objectId != null) {
         const done = queue.items.filter((i) => Number(i.objectId) === Number(objectId) && i.status === STATUS.DONE);
         for (const i of done) {
-          const p = finalPath(cfg.archiveRoot, i);
+          const own = finalPath(cfg.archiveRoot, i);
+          const p = (await sizeOf(own)) === null && i.packedIn ? path.join(cfg.archiveRoot, ...i.dest, i.packedIn) : own;
           if ((await sizeOf(p)) !== null) { target = p; select = true; break; }
         }
       } else if (typeof creator === 'string') {

@@ -453,3 +453,45 @@ test('batches: Start opens one, mid-run selections join, it closes and resets wh
   assert.equal(st.upcoming.files, 0);
   assert.equal(st.summary.done, 3, 'archive-wide count keeps everything');
 });
+
+test('history: start, downloads, retries, pauses and the batch summary, newest first', async (t) => {
+  const { call, staging } = await setupBridge(t, { items: ITEMS });
+  await call('/resume', {});
+  const n1 = (await call('/next', {})).body;
+  await writeFile(path.join(staging, '1_10.zip'), Buffer.from('not a zip'));
+  await call('/report', { key: n1.item.key, ok: true, path: path.join(staging, '1_10.zip') }); // retry
+  for (let k = 0; k < 2; k++) {
+    const n = (await call('/next', {})).body;
+    const f = path.join(staging, `${n.item.key.replace(':', '_')}.zip`);
+    await writeFile(f, n.item.key === '1:10' ? zipA : zipB);
+    await call('/report', { key: n.item.key, ok: true, path: f });
+  }
+  assert.equal((await call('/next', {})).body.action, 'done');
+  await call('/pause', {});
+  await new Promise((r) => setTimeout(r, 50)); // pause is logged in the background
+
+  const ev = (await call('/history')).body.events;
+  assert.deepEqual(ev.map((e) => e.type), ['pause', 'batch', 'done', 'done', 'retry', 'start']);
+  assert.equal(ev[1].files, 2);
+  assert.equal(ev[2].model, 'Obj');
+  assert.equal(ev[2].creator, 'Rescale');
+  assert.ok(['A.zip', 'B.zip'].includes(ev[2].file));
+  assert.equal(ev[5].files, 2);
+  assert.match(ev[4].reason, /zip/i);
+});
+
+test('bridge never overwrites a different file already in the archive', async (t) => {
+  const { call, staging, archive, queueFile } = await setupBridge(t, { items: ITEMS.slice(0, 1) });
+  const dest = path.join(archive, 'Rescale', '2024-10 - Hollow Graves', 'A.zip');
+  await mkdir(path.dirname(dest), { recursive: true });
+  await writeFile(dest, 'the combined zip, keep me');
+  const n = (await call('/next', {})).body;
+  const f = path.join(staging, '1_10.zip');
+  await writeFile(f, zipA);
+  await call('/report', { key: n.item.key, ok: true, path: f });
+  assert.equal(await readFile(dest, 'utf8'), 'the combined zip, keep me');
+  assert.ok(existsSync(f), 'download kept in staging');
+  const item = (await loadQueue(queueFile)).items[0];
+  assert.equal(item.status, 'failed');
+  assert.match(item.error, /different file is already/);
+});

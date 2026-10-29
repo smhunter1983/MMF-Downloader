@@ -176,7 +176,7 @@ export async function buildPlan(cfg, api, { refresh = false, log = console.log }
   const existing = await loadQueue().catch(() => null);
   if (errors.length && existing) {
     const failedIds = new Set(errors.map((e) => e.id));
-    planned.push(...existing.items.filter((i) => failedIds.has(i.objectId)).map(({ status, attempts, error, doneAt, startedAt, movedFrom, alsoIn, ...rest }) => rest));
+    planned.push(...existing.items.filter((i) => failedIds.has(i.objectId)).map(({ status, attempts, error, doneAt, startedAt, movedFrom, alsoIn, packedIn, ...rest }) => rest));
   }
   const deduped = dedupeItems(planned);
   resolveNameClashes(deduped.items);
