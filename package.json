@@ -1,6 +1,6 @@
 {
   "name": "mmf-downloader",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Archive a MyMiniFactory library locally.",
   "type": "module",
   "bin": {

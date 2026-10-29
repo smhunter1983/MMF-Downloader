@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.0.4 (2026-10-29)
+
+- If MMF refuses a download (SERVER_FORBIDDEN), wait 10 minutes and retry by
+  itself once before pausing (`forbiddenRetryMinutes`). Seen twice in a
+  long run; a plain Start fixed it both times. Logged-out still pauses at once.
+- "Show in Explorer" (✓) brings the Explorer window to the front.
+- Start bridge shows Chrome's exact error; the button keeps a fixed size.
+
+Known issue: on current Chrome (seen on 156) the Start bridge button can fail
+with "Specified native messaging host not found" even when everything is
+registered correctly. Start the bridge with `node mmf.js serve` instead.
+
 ## 1.0.3 (2026-10-28)
 
 - Library tree: **NEW** badges on models that the latest Sync brought in

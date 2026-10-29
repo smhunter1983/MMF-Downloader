@@ -5,7 +5,7 @@
 import { open, stat } from 'node:fs/promises';
 
 const MAX_READ = 8 * 1024 * 1024; // the tail is plenty for a short history
-const TYPES = new Set(['done', 'fail', 'pause', 'start', 'batch']);
+const TYPES = new Set(['done', 'fail', 'pause', 'start', 'batch', 'hold']);
 
 export async function readHistory(logFile, items = [], { limit = 10000 } = {}) {
   let text = '';
@@ -43,6 +43,7 @@ export async function readHistory(logFile, items = [], { limit = 10000 } = {}) {
       files: e.files ?? null,
       failed: e.failed ?? null,
       reason: e.reason ?? e.note ?? null,
+      until: e.until ?? null,
     });
   }
   return out;

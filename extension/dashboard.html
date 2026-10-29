@@ -38,7 +38,7 @@
   .msg { margin-top: 10px; padding: 8px 10px; border-radius: 7px; background: var(--row-hover); white-space: pre-line; }
   .msgrow { display: flex; gap: 8px; align-items: stretch; }
   .msgrow .msg { flex: 1; }
-  .msgrow button { margin-top: 10px; }
+  .msgrow button { margin-top: 10px; flex: none; align-self: flex-start; width: 120px; white-space: nowrap; }
   .msg.warn { background: var(--warn-bg); color: var(--warn); }
   .toolbar { display: flex; gap: 8px; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--bg); position: sticky; top: var(--header-h, 150px); z-index: 1; }
   .toolbar input { flex: 1; font: inherit; padding: 6px 10px; border-radius: 7px; border: 1px solid var(--line); background: var(--panel); color: var(--text); }

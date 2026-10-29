@@ -120,7 +120,8 @@ pwsh -File tools\Combine-RescalePairs.ps1 -Execute -Only "2025-0*"   # some rele
 | "Bridge offline" | Click **Start bridge**, or run `node mmf.js serve` |
 | "Paused: Got a web page instead of the file" | Open myminifactory.com in Chrome, log in / pass the check, press **Start** |
 | `plan` says 401 / not logged in | `node mmf.js login` |
-| Start bridge says "one-time setup needed" | `node mmf.js install-host`, then reload the extension |
+| Start bridge says "Specified native messaging host not found" | Known issue on current Chrome. Start the bridge with `node mmf.js serve` |
+| "MMF refused a download… retrying by itself" | Nothing to do: it retries in 10 minutes. If refused again it pauses; check you're logged in to MMF, then **Start** |
 | Some files failed | Dashboard → **Retry failed** |
 | A whole-model download fails with "Not a zip" | Some very old models: download them by hand from their MMF page |
 | Files you added by hand get downloaded again | Run `node mmf.js plan` first; it marks files already on disk as done |
@@ -134,6 +135,7 @@ pwsh -File tools\Combine-RescalePairs.ps1 -Execute -Only "2025-0*"   # some rele
 | `bundleTitles` | `{}` | `{ "60627": "Hollow Graves" }` to name a release group by hand |
 | `maxDownloadsPerHour` | `120` | Hourly cap (community reports ~150/h from MMF) |
 | `apiDelayMs` | `3000` | Gap between API calls during `plan` |
+| `forbiddenRetryMinutes` | `10` | After MMF refuses a download, wait this long and retry once by itself before pausing |
 
 ## Folder naming
 

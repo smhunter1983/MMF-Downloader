@@ -114,7 +114,7 @@ test('mergeQueue moves filed files when their folder name changes', async (t) =>
 });
 
 // Drives the bridge over HTTP exactly like the extension does.
-async function setupBridge(t, { items, cap = 10, onLibrary, onPlan, reveal = () => {} } = {}) {
+async function setupBridge(t, { items, cap = 10, onLibrary, onPlan, reveal = () => {}, now } = {}) {
   const dir = await tempDir(t);
   const archive = path.join(dir, 'archive');
   const staging = path.join(dir, 'Downloads', 'MMF-staging');
@@ -122,7 +122,7 @@ async function setupBridge(t, { items, cap = 10, onLibrary, onPlan, reveal = () 
   const queueFile = path.join(dir, 'queue.json');
   await saveQueue(await mergeQueue(null, items, archive), queueFile);
   const cfg = { archiveRoot: archive, stagingFolderName: 'MMF-staging', bridgePort: 0, maxDownloadsPerHour: cap };
-  const bridge = createBridge(cfg, { queueFile, logFile: path.join(dir, 'log.jsonl'), log: () => {}, onLibrary, onPlan, reveal });
+  const bridge = createBridge(cfg, { queueFile, logFile: path.join(dir, 'log.jsonl'), log: () => {}, onLibrary, onPlan, reveal, ...(now ? { now } : {}) });
   const port = await bridge.start();
   t.after(() => bridge.stop());
   const call = async (p, body, headers = {}) => {
@@ -206,10 +206,10 @@ test('bridge retries a corrupt file, then gives up after 3 attempts', async (t) 
   assert.equal((await call('/next', {})).body.action, 'download');
 });
 
-test('bridge pauses when Chrome reports MMF refused the download', async (t) => {
+test('bridge pauses straight away when Chrome reports we are logged out', async (t) => {
   const { call } = await setupBridge(t, { items: ITEMS });
   const n = (await call('/next', {})).body;
-  const r = (await call('/report', { key: n.item.key, ok: false, error: 'SERVER_FORBIDDEN' })).body;
+  const r = (await call('/report', { key: n.item.key, ok: false, error: 'SERVER_UNAUTHORIZED' })).body;
   assert.equal(r.paused, true);
   assert.equal((await call('/status')).body.summary.failed, 0);
 });
@@ -526,4 +526,53 @@ test('sync plan: refused mid-download, and errors are reported', async (t) => {
   const st = (await call('/status')).body;
   assert.equal(st.lastPlan.ok, false);
   assert.match(st.lastPlan.error, /node mmf.js login/);
+});
+
+test('reveal on Windows: opens Explorer, then brings that folder\'s window to the front', async () => {
+  const { revealInFileManager } = await import('../src/reveal.js');
+  const calls = [];
+  const run = (cmd, args, opts) => calls.push({ cmd, args, opts });
+  revealInFileManager('Z:\\MMF\\Rescale Miniatures\\2026-01\\WyvernUntamed.zip', { select: true }, { platform: 'win32', run });
+  assert.equal(calls[0].cmd, 'explorer.exe');
+  assert.deepEqual(calls[0].args, ['/select,"Z:\\MMF\\Rescale Miniatures\\2026-01\\WyvernUntamed.zip"']);
+  assert.equal(calls[1].cmd, 'powershell.exe');
+  assert.equal(calls[1].opts.env.MMF_REVEAL_DIR, 'Z:\\MMF\\Rescale Miniatures\\2026-01');
+  assert.ok(!calls[1].args.join(' ').includes('WyvernUntamed'), 'path goes via env, never into the script');
+  calls.length = 0;
+  revealInFileManager('Z:\\MMF\\Rescale Miniatures', { select: false }, { platform: 'win32', run });
+  assert.equal(calls[1].opts.env.MMF_REVEAL_DIR, 'Z:\\MMF\\Rescale Miniatures');
+});
+
+test('MMF refusal: waits 10 minutes and retries once by itself; a second refusal in a row pauses', async (t) => {
+  let clock = Date.parse('2026-10-29T22:00:00Z');
+  const { call, staging } = await setupBridge(t, { items: ITEMS, now: () => clock });
+  let n = (await call('/next', {})).body;
+  await call('/report', { key: n.item.key, ok: false, error: 'SERVER_FORBIDDEN' });
+  let st = (await call('/status')).body;
+  assert.equal(st.paused, false, 'first refusal does not pause');
+  assert.equal(Date.parse(st.hold.until) - clock, 10 * 60 * 1000);
+  const w = (await call('/next', {})).body;
+  assert.equal(w.action, 'wait');
+  assert.match(w.reason, /retrying automatically/);
+
+  clock += 10 * 60 * 1000 + 1;
+  n = (await call('/next', {})).body;
+  assert.equal(n.action, 'download', 'retries after the wait');
+  assert.equal(n.item.key, '1:10', 'the refused file goes first');
+  await call('/report', { key: n.item.key, ok: false, error: 'SERVER_FORBIDDEN' });
+  st = (await call('/status')).body;
+  assert.equal(st.paused, true, 'refused again right away: pause');
+
+  // Start clears it; a success re-arms the one automatic retry.
+  await call('/resume', {});
+  n = (await call('/next', {})).body;
+  await writeFile(path.join(staging, '1_10.zip'), zipA);
+  await call('/report', { key: n.item.key, ok: true, path: path.join(staging, '1_10.zip') });
+  n = (await call('/next', {})).body;
+  await call('/report', { key: n.item.key, ok: false, error: 'SERVER_FORBIDDEN' });
+  st = (await call('/status')).body;
+  assert.equal(st.paused, false);
+  assert.ok(st.hold);
+  const hist = (await call('/history')).body.events.map((e) => e.type);
+  assert.ok(hist.includes('hold') && hist.includes('pause'));
 });

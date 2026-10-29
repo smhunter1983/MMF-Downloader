@@ -18,6 +18,7 @@ import {
 import { verifyDownload } from './verify.js';
 import { pinWindow } from './pin.js';
 import { readHistory } from './history.js';
+import { revealInFileManager } from './reveal.js';
 
 export const BRIDGE_HEADER = 'x-mmf-bridge';
 const HOUR_MS = 60 * 60 * 1000;
@@ -80,18 +81,6 @@ export function isAllowedStagingPath(cfg, item, reported) {
 }
 
 // Opens Explorer/Finder at a folder, or with a file selected.
-export function revealInFileManager(target, { select }) {
-  if (process.platform === 'win32') {
-    // Explorer parses its own command line: the path must be quoted exactly
-    // like /select,"C:\a b\c.zip", which Node's default quoting breaks.
-    const arg = select ? `/select,"${target}"` : `"${target}"`;
-    execFile('explorer.exe', [arg], { windowsVerbatimArguments: true });
-  } else if (process.platform === 'darwin') {
-    execFile('open', select ? ['-R', target] : [target]);
-  } else {
-    execFile('xdg-open', [select ? path.dirname(target) : target]);
-  }
-}
 
 export function createBridge(cfg, {
   queueFile = QUEUE_PATH, logFile = LOG_PATH, now = () => Date.now(), log = console.log, onLibrary = null, onPlan = null,
@@ -99,7 +88,10 @@ export function createBridge(cfg, {
 } = {}) {
   let queue = { items: [] };
   let queueMtime = null;
-  const state = { paused: false, pauseReason: null, lastEvent: null };
+  // hold: after MMF refuses a download, wait and retry once by itself before
+  // pausing (seen twice in a long run; a plain Start fixed it both times).
+  const state = { paused: false, pauseReason: null, lastEvent: null, hold: null, retriedRefusal: false };
+  const holdMs = (cfg.forbiddenRetryMinutes ?? 10) * 60 * 1000;
   const starts = []; // timestamps of downloads started, for the hourly cap
   let lock = Promise.resolve();
 
@@ -163,6 +155,11 @@ export function createBridge(cfg, {
     if (!queue.items.length) return { action: 'done', summary: summarize(queue), reason: 'No download queue yet. Run: node mmf.js plan' };
     if (state.paused) return { action: 'paused', reason: state.pauseReason };
     if (planning) return { action: 'wait', ms: 5000, reason: 'Updating the download list' };
+    if (state.hold) {
+      const ms = state.hold.until - now();
+      if (ms > 0) return { action: 'wait', ms, reason: `${state.hold.reason}; retrying automatically` };
+      state.hold = null;
+    }
     // An item still marked active belongs to a download the extension lost
     // track of (browser restart). Put it back in line.
     for (const i of queue.items) if (i.status === STATUS.ACTIVE) i.status = STATUS.PENDING;
@@ -204,6 +201,13 @@ export function createBridge(cfg, {
     if (item.status !== STATUS.ACTIVE) return { ok: false, error: `Item is ${item.status}, not active` };
 
     if (!ok) {
+      if (error === 'SERVER_FORBIDDEN' && !state.retriedRefusal) {
+        state.retriedRefusal = true;
+        state.hold = { until: now() + holdMs, reason: `MMF refused a download (${error})` };
+        await fail(item, `Chrome: ${error} (retrying automatically)`, { countAttempt: false });
+        await logEvent({ type: 'hold', key: item.key, reason: state.hold.reason, until: new Date(state.hold.until).toISOString() });
+        return { ok: true, held: true };
+      }
       if (BLOCKING_ERRORS.has(error)) {
         await fail(item, `Chrome: ${error}`, { countAttempt: false });
         pause(`MMF refused the download (${error}). Open myminifactory.com in Chrome, make sure you're logged in, then press Start.`);
@@ -248,6 +252,7 @@ export function createBridge(cfg, {
     item.status = STATUS.DONE;
     item.error = null;
     item.note = v.note ?? null;
+    state.retriedRefusal = false;
     item.doneBytes = v.bytes;
     if (item.wholeZip) item.setAside = await setAsideReplaced(cfg, item, log);
     item.doneAt = new Date(now()).toISOString();
@@ -294,6 +299,7 @@ export function createBridge(cfg, {
       lastEvent: state.lastEvent,
       planning,
       lastPlan,
+      hold: state.hold ? { until: new Date(state.hold.until).toISOString(), reason: state.hold.reason } : null,
     };
   }
 
@@ -306,6 +312,8 @@ export function createBridge(cfg, {
     'POST /resume': () => exclusive(async () => {
       if (planning) return planBusy();
       state.paused = false;
+      state.hold = null; // pressing Start retries straight away
+      state.retriedRefusal = false;
       state.pauseReason = null;
       await syncQueue();
       const ahead = upcoming(queue);

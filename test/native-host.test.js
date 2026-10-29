@@ -72,3 +72,4 @@ test('install-host: finds the extension id by its folder, in any profile', async
   assert.deepEqual(await findExtensionIds(path.join(root, 'missing'), ext), []);
   assert.deepEqual(hostManifest('C:\\h.cmd', [mine]).allowed_origins, [`chrome-extension://${mine}/`]);
 });
+

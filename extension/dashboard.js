@@ -39,9 +39,9 @@ async function startBridge() {
     const r = await chrome.runtime.sendNativeMessage(HOST_NAME, { cmd: 'startBridge' });
     bridgeError = r?.ok ? null : `Couldn't start the bridge: ${r?.error ?? 'no reply'}`;
   } catch (err) {
-    bridgeError = /not found|forbidden/i.test(err.message)
-      ? 'One-time setup needed for this button: in the MMF Downloader folder run  node mmf.js install-host  then reload the extension. (Or start it by hand: node mmf.js serve)'
-      : `Couldn't start the bridge: ${err.message}`;
+    // Chrome's own wording, so the real cause is visible.
+    bridgeError = `Couldn't start the bridge (Chrome says: "${err.message}"). `
+      + 'If it says "not found", run  node mmf.js install-host  in the MMF Downloader folder and reload the extension. Or start it by hand: node mmf.js serve';
   } finally {
     startingBridge = false;
     $('startBridge').disabled = false;
@@ -94,7 +94,13 @@ async function refreshStatus() {
   $('retry').classList.toggle('hidden', !sum.failed);
 
   let text = st.paused ? `Paused: ${st.pauseReason}` : s.message;
-  const waitingForCap = s.running && !st.paused && s.resumeAt && s.resumeAt > Date.now() && !st.current;
+  const holding = s.running && !st.paused && st.hold && Date.parse(st.hold.until) > Date.now() && !st.current;
+  const waitingForCap = s.running && !st.paused && !holding && s.resumeAt && s.resumeAt > Date.now() && !st.current;
+  if (holding) {
+    const until = Date.parse(st.hold.until);
+    const secs = Math.ceil((until - Date.now()) / 1000);
+    text = `${st.hold.reason}. Retrying by itself in ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}, at ${new Date(until).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}. If it's refused again, the run pauses.`;
+  }
   if (waitingForCap) {
     const secs = Math.ceil((s.resumeAt - Date.now()) / 1000);
     text = `Hourly limit reached (${st.rate.cap} downloads). Resumes automatically in ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}, at ${new Date(s.resumeAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}. Leave Chrome and the bridge open.`;
@@ -110,7 +116,7 @@ async function refreshStatus() {
   if (!sum.total && !sum.skipped) text = `${s.message}\nNo download queue yet: click "Sync library".`;
   if (st.planning) text = `Updating the download list: ${st.planning.line}`;
   $('msg').textContent = text;
-  $('msg').className = st.paused || waitingForCap ? 'msg warn' : 'msg';
+  $('msg').className = st.paused || waitingForCap || holding ? 'msg warn' : 'msg';
 }
 
 function etaText(hours) {
@@ -346,6 +352,7 @@ const HKIND = {
   fail: { icon: '✗', cls: 'fail' },
   retry: { icon: '↻', cls: 'retry' },
   pause: { icon: '⏸', cls: 'pause' },
+  hold: { icon: '⏳', cls: 'pause' },
   start: { icon: '▶', cls: 'run' },
   batch: { icon: '■', cls: 'run' },
 };
@@ -353,7 +360,7 @@ const HFILTER = {
   all: () => true,
   done: (e) => e.type === 'done',
   problems: (e) => e.type === 'fail' || e.type === 'retry',
-  runs: (e) => e.type === 'start' || e.type === 'batch' || e.type === 'pause',
+  runs: (e) => e.type === 'start' || e.type === 'batch' || e.type === 'pause' || e.type === 'hold',
 };
 
 function historyLine(e) {
@@ -361,6 +368,7 @@ function historyLine(e) {
   if (e.type === 'start') return [`Started downloading ${plural(e.files ?? 0, 'file')}`, e.bytes ? fmt(e.bytes) : ''];
   if (e.type === 'batch') return [`Batch finished: ${plural(e.files ?? 0, 'file')}${e.failed ? `, ${e.failed} failed` : ''}`, e.bytes ? fmt(e.bytes) : ''];
   if (e.type === 'pause') return ['Paused', e.reason ?? ''];
+  if (e.type === 'hold') return [`${e.reason ?? 'MMF refused a download'}: retrying by itself`, e.until ? `at ${new Date(e.until).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : ''];
   const where = [
     e.creator ? `<span class="creator" title="Show only ${esc(e.creator)}">${esc(e.creator)}</span>` : '',
     e.model ? esc(e.model) : '',

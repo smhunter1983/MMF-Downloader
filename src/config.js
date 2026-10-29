@@ -27,6 +27,7 @@ const DEFAULTS = {
   bridgePort: 8766,
   maxDownloadsPerHour: 120,
   stagingFolderName: 'MMF-staging',
+  forbiddenRetryMinutes: 10,
 };
 
 export async function loadConfig() {

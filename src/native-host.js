@@ -6,6 +6,7 @@
 // that many bytes of UTF-8 JSON, on stdin/stdout. stdout carries ONLY replies.
 
 import { spawn } from 'node:child_process';
+import { appendFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PROJECT_DIR } from './config.js';
@@ -94,6 +95,9 @@ async function main() {
   } catch (err) {
     reply = { ok: false, error: err.message };
   }
+  // One line per call, so we can tell whether Chrome started the helper at all.
+  const line = `${new Date().toISOString()} ${JSON.stringify(reply)}\n`;
+  await appendFile(path.join(PROJECT_DIR, 'data', 'native-host', 'host.log'), line).catch(() => {});
   process.stdout.write(encodeMessage(reply), () => process.exit(0));
 }
 
