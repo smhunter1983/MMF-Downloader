@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.1 (2026-10-28)
+
+- **Sync library** now also builds the download list (no more "run node mmf.js
+  plan"); new models come in checked, ready for Start.
+- History button moved up to the header.
+
 ## 1.0.0 (2026-10-28)
 
 First full release, used to archive a 2,546-file, 1.9 TB library.

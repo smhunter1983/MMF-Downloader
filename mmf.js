@@ -99,8 +99,17 @@ async function receiveLibrary({ objectPreviews, releases }) {
   return { objects: entries.length, releases: Object.keys(releases).length };
 }
 
+// "Sync library" in the dashboard runs plan in the bridge right after the sync.
+function planFromDashboard(cfg) {
+  return async ({ log }) => {
+    const r = await buildPlan(cfg, createApi(cfg, { log }), { log });
+    const s = summarize(r.queue);
+    return { fetched: r.fetched, cached: r.cached, pending: s.pending, failed: s.failed, errors: r.errors.length, unavailable: r.unavailable.length };
+  };
+}
+
 async function cmdServe(cfg) {
-  const bridge = createBridge(cfg, { onLibrary: receiveLibrary });
+  const bridge = createBridge(cfg, { onLibrary: receiveLibrary, onPlan: planFromDashboard(cfg) });
   const port = await bridge.start();
   console.log(`Bridge listening on http://127.0.0.1:${port}`);
   printSummary(bridge.queue);

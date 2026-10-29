@@ -114,7 +114,7 @@ test('mergeQueue moves filed files when their folder name changes', async (t) =>
 });
 
 // Drives the bridge over HTTP exactly like the extension does.
-async function setupBridge(t, { items, cap = 10, onLibrary, reveal = () => {} } = {}) {
+async function setupBridge(t, { items, cap = 10, onLibrary, onPlan, reveal = () => {} } = {}) {
   const dir = await tempDir(t);
   const archive = path.join(dir, 'archive');
   const staging = path.join(dir, 'Downloads', 'MMF-staging');
@@ -122,7 +122,7 @@ async function setupBridge(t, { items, cap = 10, onLibrary, reveal = () => {} } 
   const queueFile = path.join(dir, 'queue.json');
   await saveQueue(await mergeQueue(null, items, archive), queueFile);
   const cfg = { archiveRoot: archive, stagingFolderName: 'MMF-staging', bridgePort: 0, maxDownloadsPerHour: cap };
-  const bridge = createBridge(cfg, { queueFile, logFile: path.join(dir, 'log.jsonl'), log: () => {}, onLibrary, reveal });
+  const bridge = createBridge(cfg, { queueFile, logFile: path.join(dir, 'log.jsonl'), log: () => {}, onLibrary, onPlan, reveal });
   const port = await bridge.start();
   t.after(() => bridge.stop());
   const call = async (p, body, headers = {}) => {
@@ -494,4 +494,36 @@ test('bridge never overwrites a different file already in the archive', async (t
   const item = (await loadQueue(queueFile)).items[0];
   assert.equal(item.status, 'failed');
   assert.match(item.error, /different file is already/);
+});
+
+test('sync plan: runs in the background, blocks queue changes meanwhile, reports the result', async (t) => {
+  let finish;
+  const onPlan = ({ log }) => new Promise((resolve) => { log('  25/100 objects (2 fetched, 23 cached)'); finish = resolve; });
+  const { call } = await setupBridge(t, { items: ITEMS, onPlan });
+  assert.deepEqual((await call('/plan', {})).body, { ok: true, started: true });
+  assert.deepEqual((await call('/plan', {})).body, { ok: true, already: true });
+  let st = (await call('/status')).body;
+  assert.match(st.planning.line, /25\/100 objects/);
+  assert.equal((await call('/skip', { objectIds: [1], skip: true })).body.ok, false, 'no queue edits while planning');
+  assert.equal((await call('/resume', {})).body.ok, false);
+  assert.equal((await call('/next', {})).body.action, 'wait');
+  finish({ pending: 2, fetched: 2, cached: 23, errors: 0 });
+  await new Promise((r) => setTimeout(r, 20));
+  st = (await call('/status')).body;
+  assert.equal(st.planning, null);
+  assert.equal(st.lastPlan.ok, true);
+  assert.equal(st.lastPlan.pending, 2);
+  assert.equal((await call('/next', {})).body.action, 'download');
+});
+
+test('sync plan: refused mid-download, and errors are reported', async (t) => {
+  const { call } = await setupBridge(t, { items: ITEMS, onPlan: async () => { throw new Error('Not logged in. Run: node mmf.js login'); } });
+  await call('/next', {});
+  assert.match((await call('/plan', {})).body.error, /download is in progress/);
+  await call('/report', { key: '1:10', ok: false, error: 'NETWORK_FAILED' });
+  assert.equal((await call('/plan', {})).body.started, true);
+  await new Promise((r) => setTimeout(r, 20));
+  const st = (await call('/status')).body;
+  assert.equal(st.lastPlan.ok, false);
+  assert.match(st.lastPlan.error, /node mmf.js login/);
 });

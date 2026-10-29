@@ -47,20 +47,19 @@ Download: green **Code** button → **Download ZIP** on GitHub, unzip anywhere
 
 1. `node mmf.js serve` and leave it running (or click **Start bridge** in the
    dashboard if you ran `install-host`).
-2. Chrome toolbar → MMF Downloader → dashboard → **Sync library** (pulls your
-   library list and release names through your logged-in Chrome; read-only).
-3. `node mmf.js bundles` to preview the Creator\Bundle folders (optional).
-4. `node mmf.js plan` builds the queue (first run takes about 1.5 hours; it's
-   paced and cached, so later runs take seconds and only add what's new).
-   The running bridge picks up the new queue automatically.
-5. In the dashboard, review Creator ▸ Release ▸ Model with sizes, untick anything
+2. Chrome toolbar → MMF Downloader → dashboard → **Sync library**. One click
+   pulls your library list and release names through your logged-in Chrome
+   (read-only), then builds the download list. The first time takes about 1.5
+   hours (paced, cached); after that only new models are fetched, so a new
+   bundle takes a minute or so. (`node mmf.js plan` does the same from a terminal.)
+3. Review Creator ▸ Release ▸ Model with sizes, untick anything
    you don't want (Get/Skip; filter box + Check all / Uncheck all), then **Start**.
    At the hourly cap it waits and resumes on its own (countdown shown).
    Click **Done** on any row to show it in Explorer.
    Choices are remembered across re-plans and can be changed mid-run.
 
 `node mmf.js status` shows progress any time. Stop/start freely; it resumes.
-**History** (dashboard toolbar) lists what was downloaded, retried or failed,
+**History** (dashboard header) lists what was downloaded, retried or failed,
 and when runs started, paused and finished, newest first. Filter it, search it,
 and click a download to show it in Explorer.
 

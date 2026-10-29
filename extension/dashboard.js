@@ -70,7 +70,9 @@ async function refreshStatus() {
   }
   bridgeError = null;
   const sum = st.summary;
-  $('start').disabled = s.running || (!st.batch && !st.upcoming.files);
+  $('start').disabled = s.running || !!st.planning || (!st.batch && !st.upcoming.files);
+  $('sync').disabled = s.running || !!st.planning;
+  $('sync').textContent = st.planning ? 'Syncing...' : 'Sync library';
   // The bar, file count, GB and ETA follow the current batch (what Start set
   // going). Between batches they show what the next Start would download.
   const b = st.batch ?? { total: st.upcoming.files, done: 0, failed: 0, bytesTotal: st.upcoming.bytes, bytesDone: 0 };
@@ -103,7 +105,8 @@ async function refreshStatus() {
     const when = new Date(lb.finishedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
     text = `Last batch done ✓ ${lb.files.toLocaleString()} file${lb.files === 1 ? '' : 's'}, ${fmt(lb.bytes)} (finished ${when})${lb.failed ? `, ${lb.failed} failed` : ''}. Check more models to start another.`;
   }
-  if (!sum.total && !sum.skipped) text = `${s.message}\nNo download queue yet: click "Sync library", then run "node mmf.js plan".`;
+  if (!sum.total && !sum.skipped) text = `${s.message}\nNo download queue yet: click "Sync library".`;
+  if (st.planning) text = `Updating the download list: ${st.planning.line}`;
   $('msg').textContent = text;
   $('msg').className = st.paused || waitingForCap ? 'msg warn' : 'msg';
 }
@@ -296,7 +299,9 @@ $('sync').onclick = async () => {
   await chrome.runtime.sendMessage({ cmd: 'syncLibrary' });
   $('sync').textContent = 'Sync library';
   refreshStatus();
+  loadTree();
 };
+$('sync').title = 'Fetch your MMF library and add anything new to the download list';
 $('search').oninput = (e) => { filter = e.target.value.trim().toLowerCase(); historyMode ? renderHistory() : renderTree(); };
 $('getAll').onclick = () => setSkip(visibleObjects(), false);
 $('skipAll').onclick = () => setSkip(visibleObjects(), true);

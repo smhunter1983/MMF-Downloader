@@ -54,8 +54,30 @@ async function syncLibrary() {
     await new Promise((r) => setTimeout(r, 400));
   }
   const r = await bridge('/library', { objectPreviews, releases });
-  const msg = `Library synced: ${r.objects} objects, ${r.releases} release names. Now run "node mmf.js plan".`;
-  await setState({ message: msg });
+  if (r.ok === false) throw new Error(r.error);
+  const synced = `Library synced: ${r.objects.toLocaleString()} models.`;
+  await setState({ message: `${synced} Updating the download list...` });
+
+  // Then build the download list (what "node mmf.js plan" does). New models
+  // need one API call each, so a new bundle takes a minute or so.
+  const p = await bridge('/plan', {});
+  if (p.ok === false) throw new Error(p.error);
+  const deadline = Date.now() + 3 * 60 * 60 * 1000;
+  let st;
+  do {
+    await new Promise((res) => setTimeout(res, 2000));
+    st = await bridge('/status');
+  } while (st.planning && Date.now() < deadline);
+  const lp = st.lastPlan;
+  if (!lp || st.planning) {
+    await setState({ message: `${synced} Still updating the download list; it carries on in the bridge window.` });
+  } else if (!lp.ok) {
+    await setState({ message: `${synced} Updating the download list failed: ${lp.error}` });
+  } else {
+    const parts = [lp.pending ? `${lp.pending.toLocaleString()} file${lp.pending === 1 ? '' : 's'} ready to download (new models are checked)` : 'Nothing new to download'];
+    if (lp.errors) parts.push(`${lp.errors} model${lp.errors === 1 ? '' : 's'} couldn't be read this time (sync again later)`);
+    await setState({ message: `${synced} ${parts.join('. ')}.` });
+  }
   return r;
 }
 

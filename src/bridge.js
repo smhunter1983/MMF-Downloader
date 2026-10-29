@@ -94,7 +94,7 @@ export function revealInFileManager(target, { select }) {
 }
 
 export function createBridge(cfg, {
-  queueFile = QUEUE_PATH, logFile = LOG_PATH, now = () => Date.now(), log = console.log, onLibrary = null,
+  queueFile = QUEUE_PATH, logFile = LOG_PATH, now = () => Date.now(), log = console.log, onLibrary = null, onPlan = null,
   reveal = revealInFileManager, pin = pinWindow,
 } = {}) {
   let queue = { items: [] };
@@ -162,6 +162,7 @@ export function createBridge(cfg, {
     await syncQueue();
     if (!queue.items.length) return { action: 'done', summary: summarize(queue), reason: 'No download queue yet. Run: node mmf.js plan' };
     if (state.paused) return { action: 'paused', reason: state.pauseReason };
+    if (planning) return { action: 'wait', ms: 5000, reason: 'Updating the download list' };
     // An item still marked active belongs to a download the extension lost
     // track of (browser restart). Put it back in line.
     for (const i of queue.items) if (i.status === STATUS.ACTIVE) i.status = STATUS.PENDING;
@@ -257,6 +258,28 @@ export function createBridge(cfg, {
     return { ok: true };
   }
 
+  // "plan" run from the dashboard (after Sync library). While it runs, nothing
+  // that changes the queue is allowed: plan rewrites queue.json at the end.
+  let planning = null;
+  let lastPlan = null;
+  const planBusy = () => (planning ? { ok: false, error: 'Updating the download list; try again in a moment.' } : null);
+
+  function startPlan() {
+    const at = () => new Date(now()).toISOString();
+    planning = { startedAt: at(), line: 'Starting...' };
+    (async () => {
+      try {
+        const r = await onPlan({ log: (m) => { planning.line = String(m).trim(); log(m); } });
+        lastPlan = { ok: true, at: at(), ...r };
+      } catch (err) {
+        lastPlan = { ok: false, at: at(), error: err.message };
+        log(`plan failed: ${err.message}`);
+      } finally {
+        planning = null;
+      }
+    })();
+  }
+
   function status() {
     const current = queue.items.find((i) => i.status === STATUS.ACTIVE);
     return {
@@ -269,6 +292,8 @@ export function createBridge(cfg, {
       rate: rateInfo(),
       current: current ? { label: `${current.creator} / ${current.objectName} / ${current.filename}`, size: current.size } : null,
       lastEvent: state.lastEvent,
+      planning,
+      lastPlan,
     };
   }
 
@@ -279,6 +304,7 @@ export function createBridge(cfg, {
     'POST /pause': () => { pause('Paused from Chrome.'); return { ok: true }; },
     // Start: un-pause and (re)open a batch with everything currently selected.
     'POST /resume': () => exclusive(async () => {
+      if (planning) return planBusy();
       state.paused = false;
       state.pauseReason = null;
       await syncQueue();
@@ -290,6 +316,7 @@ export function createBridge(cfg, {
     'GET /history': () => exclusive(async () => { await syncQueue(); return { events: await readHistory(logFile, queue.items) }; }),
     'GET /tree': () => exclusive(async () => { await syncQueue(); return { tree: buildTree(queue) }; }),
     'POST /skip': ({ objectIds, skip }) => exclusive(async () => {
+      if (planning) return planBusy();
       if (!Array.isArray(objectIds) || typeof skip !== 'boolean') return { ok: false, error: 'Expected { objectIds: [...], skip: true|false }' };
       await syncQueue();
       const changed = setSkip(queue, objectIds, skip);
@@ -324,11 +351,21 @@ export function createBridge(cfg, {
       return { ok: true, path: resolved };
     }),
     'POST /pin': ({ title, pinned }) => pin(String(title ?? ''), pinned === true),
+    'POST /plan': () => exclusive(async () => {
+      if (!onPlan) return { ok: false, error: 'Planning not available' };
+      if (planning) return { ok: true, already: true };
+      await syncQueue();
+      if (queue.items.some((i) => i.status === STATUS.ACTIVE)) return { ok: false, error: 'A download is in progress. Pause, let it finish, then sync again.' };
+      startPlan();
+      return { ok: true, started: true };
+    }),
     'POST /library': (body) => exclusive(async () => {
+      if (planning) return planBusy();
       if (!onLibrary) return { ok: false, error: 'Library sync not available' };
       return { ok: true, ...(await onLibrary(body)) };
     }),
     'POST /retry-failed': () => exclusive(async () => {
+      if (planning) return planBusy();
       await syncQueue();
       let n = 0;
       for (const i of queue.items) if (i.status === STATUS.FAILED) { i.status = STATUS.PENDING; i.attempts = 0; n++; }
