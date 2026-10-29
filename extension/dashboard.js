@@ -7,6 +7,8 @@ const expanded = new Set(); // "c:<creator>" and "b:<creator>/<bundle>"
 let tree = [];
 let filter = '';
 let historyMode = false;
+let newSince = null; // when the latest new models arrived (from Sync)
+let newOnly = false;
 let history = [];
 
 const fmt = (b) => (b >= 1073741824 ? `${(b / 1073741824).toFixed(1)} GB` : b >= 1048576 || !b ? `${(b / 1048576).toFixed(0)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`);
@@ -123,20 +125,21 @@ const objectsOf = (node) => (node.objects ?? node.bundles?.flatMap((b) => b.obje
 const matches = (text) => !filter || text.toLowerCase().includes(filter);
 
 function stats(objs) {
-  let files = 0, bytes = 0, unsized = 0, getN = 0, selFiles = 0, selDone = 0, failed = 0;
+  let files = 0, bytes = 0, unsized = 0, getN = 0, selFiles = 0, selDone = 0, failed = 0, doneAll = 0, newN = 0;
   for (const o of objs) {
-    files += o.files; bytes += o.bytes; unsized += o.unsized ?? 0;
+    files += o.files; bytes += o.bytes; unsized += o.unsized ?? 0; doneAll += o.doneFiles;
+    if (o.isNew) newN++;
     if (!o.skip) { getN++; selFiles += o.files; selDone += o.doneFiles; failed += o.failed; }
   }
-  return { files, bytes, unsized, getN, selFiles, selDone, failed, all: objs.length };
+  return { files, bytes, unsized, getN, selFiles, selDone, failed, doneAll, newN, all: objs.length };
 }
 
-// Progress counts only the files set to Get.
+// Last column: ✓ = everything here is already in your archive (whether or not
+// it's checked now); n/m = partly downloaded; blank = never downloaded.
 function stateLabel(st) {
-  if (!st.selFiles) return ['', ''];
-  if (st.selDone === st.selFiles) return ['done', 'Done'];
+  if (st.files && st.doneAll === st.files) return ['done', '✓'];
   if (st.failed) return ['failed', `${st.failed} failed`];
-  if (st.selDone) return ['', `${st.selDone}/${st.selFiles}`];
+  if (st.doneAll) return ['', `${st.doneAll}/${st.files}`];
   return ['', ''];
 }
 
@@ -184,6 +187,13 @@ function makeRow({ level, key, label, objs, expandable, where }) {
   name.className = 'name';
   name.textContent = label;
   name.title = label;
+  if (st.newN) {
+    const badge = document.createElement('span');
+    badge.className = 'new';
+    badge.textContent = level === 2 ? 'NEW' : `${st.newN} new`;
+    badge.title = `New in your library since ${new Date(newSince).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}`;
+    name.append(' ', badge);
+  }
   if (expandable) { name.style.cursor = 'pointer'; name.onclick = twisty.onclick; }
 
   const meta = document.createElement('span');
@@ -195,9 +205,10 @@ function makeRow({ level, key, label, objs, expandable, where }) {
   const state = document.createElement('span');
   state.className = `state ${cls}`;
   state.textContent = text;
+  if (text === '✓') state.title = 'Already downloaded';
   if (text && objs.some((o) => o.doneFiles > 0)) {
     state.classList.add('link');
-    state.title = 'Show in Explorer';
+    state.title = `${text === '✓' ? 'Already downloaded. ' : ''}Show in Explorer`;
     state.onclick = () => reveal(where);
   }
 
@@ -214,6 +225,7 @@ function filteredTree() {
       const cMatch = matches(c.name);
       const bundles = c.bundles
         .map((b) => ({ ...b, objects: cMatch || matches(b.name) ? b.objects : b.objects.filter((o) => matches(o.name)) }))
+        .map((b) => (newOnly ? { ...b, objects: b.objects.filter((o) => o.isNew) } : b))
         .filter((b) => b.objects.length);
       return { ...c, bundles };
     })
@@ -247,14 +259,21 @@ function renderTree() {
     }
   }
   const st = stats(shown);
-  $('selsum').textContent = filtering
-    ? `${shown.length} models match · ${st.getN} set to Get`
-    : `${st.all} models in ${tree.length} creators · ${st.getN} set to Get · click ▸ to open a creator or release`;
+  const newAll = tree.flatMap(objectsOf).filter((o) => o.isNew).length;
+  $('newOnly').classList.toggle('hidden', !newAll);
+  $('newOnly').textContent = newOnly ? 'Show all' : `New (${newAll})`;
+  $('newOnly').classList.toggle('on', newOnly);
+  if (!shown.length) root.innerHTML = '<div class="empty">Nothing matches.</div>';
+  $('selsum').textContent = filtering || newOnly
+    ? `${shown.length} models ${newOnly ? 'new' : 'match'} · ${st.getN} set to Get`
+    : `${st.all} models in ${tree.length} creators · ${st.getN} set to Get${newAll ? ` · ${newAll} new` : ''} · ✓ = already downloaded`;
 }
 
 async function loadTree() {
   try {
-    tree = (await bridge('/tree')).tree;
+    const r = await bridge('/tree');
+    tree = r.tree;
+    newSince = r.newSince ?? null;
   } catch {
     tree = [];
   }
@@ -305,6 +324,11 @@ $('sync').title = 'Fetch your MMF library and add anything new to the download l
 $('search').oninput = (e) => { filter = e.target.value.trim().toLowerCase(); historyMode ? renderHistory() : renderTree(); };
 $('getAll').onclick = () => setSkip(visibleObjects(), false);
 $('skipAll').onclick = () => setSkip(visibleObjects(), true);
+$('newOnly').onclick = () => {
+  newOnly = !newOnly;
+  if (newOnly) for (const c of filteredTree()) { expanded.add(`c:${c.name}`); for (const b of c.bundles) expanded.add(`b:${c.name}/${b.name}`); }
+  renderTree();
+};
 $('expand').onclick = () => {
   const anyOpen = expanded.size > 0;
   expanded.clear();
@@ -414,6 +438,7 @@ function setHistoryMode(on) {
   $('historyBtn').classList.toggle('on', on);
   $('historyBtn').textContent = on ? 'Back to library' : 'History';
   for (const id of ['getAll', 'skipAll', 'expand']) $(id).classList.toggle('hidden', on);
+  if (on) $('newOnly').classList.add('hidden');
   $('histFilter').classList.toggle('hidden', !on);
   $('histCreator').classList.toggle('hidden', !on);
   $('tree').classList.toggle('hidden', on);

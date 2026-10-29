@@ -24,7 +24,15 @@ export async function loadQueue(file = QUEUE_PATH) {
 export const saveQueue = (q, file = QUEUE_PATH) => writeJson(file, q);
 
 // Creator > Bundle > Object view of the queue for the dashboard.
+// The latest sync that brought in new models: those models are "new".
+export function newestSeen(q) {
+  let latest = null;
+  for (const i of q.items) if (i.firstSeen && (!latest || i.firstSeen > latest)) latest = i.firstSeen;
+  return latest;
+}
+
 export function buildTree(q) {
+  const latest = newestSeen(q);
   const creators = new Map();
   for (const i of q.items) {
     const [creatorDir, bundleDir] = i.dest;
@@ -33,7 +41,7 @@ export function buildTree(q) {
     if (!bundles.has(bundleDir)) bundles.set(bundleDir, new Map());
     const objects = bundles.get(bundleDir);
     if (!objects.has(i.objectId)) {
-      objects.set(i.objectId, { id: i.objectId, name: i.objectName, files: 0, bytes: 0, unsized: 0, doneFiles: 0, skip: true, failed: 0 });
+      objects.set(i.objectId, { id: i.objectId, name: i.objectName, files: 0, bytes: 0, unsized: 0, doneFiles: 0, skip: true, failed: 0, isNew: false });
     }
     const o = objects.get(i.objectId);
     o.files++;
@@ -44,6 +52,7 @@ export function buildTree(q) {
     if (i.status === STATUS.DONE) o.doneFiles++;
     if (i.status === STATUS.FAILED) o.failed++;
     if (!i.skip) o.skip = false;
+    if (latest && i.firstSeen === latest) o.isNew = true;
   }
   return [...creators].sort(([a], [b]) => a.localeCompare(b)).map(([name, bundles]) => ({
     name,
@@ -75,19 +84,27 @@ async function sizeOf(file) {
 // Merges freshly planned items into an existing queue, keeping progress.
 // An item counts as done if its file is already in the archive at full size,
 // which is what makes re-planning a "gap check".
-export async function mergeQueue(existing, planned, archiveRoot) {
+export async function mergeQueue(existing, planned, archiveRoot, now = Date.now()) {
+  const planTime = new Date(now).toISOString();
   const old = new Map((existing?.items ?? []).map((i) => [i.key, i]));
   // New rows for a model (e.g. a whole-model zip replacing loose parts)
   // inherit Skip when every earlier row of that model was skipped.
   const modelSkipped = new Map();
+  // When each model first appeared in a sync, so the dashboard can flag what's
+  // NEW. Models in the very first plan have none (they're the baseline).
+  const modelSeen = new Map();
   for (const i of existing?.items ?? []) {
     modelSkipped.set(i.objectId, (modelSkipped.get(i.objectId) ?? true) && i.skip === true);
+    if (!modelSeen.has(i.objectId) || (i.firstSeen && (!modelSeen.get(i.objectId) || i.firstSeen < modelSeen.get(i.objectId)))) {
+      modelSeen.set(i.objectId, i.firstSeen ?? modelSeen.get(i.objectId) ?? null);
+    }
   }
   const items = [];
   const entriesOf = zipEntryCache();
   for (const p of planned) {
     const prev = old.get(p.key);
     const item = { ...p, status: STATUS.PENDING, attempts: 0, error: null, skip: modelSkipped.get(p.objectId) ?? false };
+    item.firstSeen = modelSeen.has(p.objectId) ? modelSeen.get(p.objectId) : (existing ? planTime : null);
     if (prev) {
       item.skip = prev.skip === true;
       item.status = prev.status === STATUS.ACTIVE ? STATUS.PENDING : prev.status;
@@ -138,7 +155,7 @@ export async function mergeQueue(existing, planned, archiveRoot) {
   const batch = existing?.batch
     ? { ...existing.batch, keys: existing.batch.keys.filter((k) => keys.has(k)) }
     : undefined;
-  return { plannedAt: new Date().toISOString(), items, batch, lastBatch: existing?.lastBatch };
+  return { plannedAt: planTime, items, batch, lastBatch: existing?.lastBatch };
 }
 
 // ---------- batches ----------

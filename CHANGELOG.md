@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.3 (2026-10-28)
+
+- Library tree: **NEW** badges on models that the latest Sync brought in
+  ("3 new" on creators and releases), plus a **New (n)** button to show only them.
+- Last column: ✓ = already in your archive (checked or not); n/m = partly.
+
 ## 1.0.2 (2026-10-28)
 
 - History: filter by creator (dropdown, or click a creator's name); totals

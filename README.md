@@ -74,7 +74,9 @@ Download: green **Code** button → **Download ZIP** on GitHub, unzip anywhere
 3. Review Creator ▸ Release ▸ Model with sizes, untick anything
    you don't want (Get/Skip; filter box + Check all / Uncheck all), then **Start**.
    At the hourly cap it waits and resumes on its own (countdown shown).
-   Click **Done** on any row to show it in Explorer.
+   ✓ in the last column = already downloaded (click it to show it in Explorer).
+   Models a Sync finds for the first time get a **NEW** badge, and **New (n)**
+   shows only those, so each month's releases stand out.
    Choices are remembered across re-plans and can be changed mid-run.
 
 `node mmf.js status` shows progress any time. Stop/start freely; it resumes.

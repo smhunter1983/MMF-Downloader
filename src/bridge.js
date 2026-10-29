@@ -13,7 +13,7 @@ import { appendFile, copyFile, mkdir, rename, rm, stat } from 'node:fs/promises'
 import { LOG_PATH, QUEUE_PATH } from './config.js';
 import {
   loadQueue, saveQueue, summarize, buildTree, setSkip, finalPath, STATUS, MAX_ATTEMPTS,
-  startBatch, joinBatch, batchSummary, finishBatchIfDone, upcoming,
+  startBatch, joinBatch, batchSummary, finishBatchIfDone, upcoming, newestSeen,
 } from './queue.js';
 import { verifyDownload } from './verify.js';
 import { pinWindow } from './pin.js';
@@ -314,7 +314,7 @@ export function createBridge(cfg, {
       return { ok: true, batch: batchSummary(queue) };
     }),
     'GET /history': () => exclusive(async () => { await syncQueue(); return { events: await readHistory(logFile, queue.items) }; }),
-    'GET /tree': () => exclusive(async () => { await syncQueue(); return { tree: buildTree(queue) }; }),
+    'GET /tree': () => exclusive(async () => { await syncQueue(); return { tree: buildTree(queue), newSince: newestSeen(queue) }; }),
     'POST /skip': ({ objectIds, skip }) => exclusive(async () => {
       if (planning) return planBusy();
       if (!Array.isArray(objectIds) || typeof skip !== 'boolean') return { ok: false, error: 'Expected { objectIds: [...], skip: true|false }' };
