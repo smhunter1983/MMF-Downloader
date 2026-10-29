@@ -32,8 +32,27 @@ Download: green **Code** button → **Download ZIP** on GitHub, unzip anywhere
 2. Copy `config.example.json` to `config.local.json` and fill in `clientId`,
    `clientSecret` and `archiveRoot` (where the archive should live).
    `config.local.json` and `data\` are git-ignored; they never get committed.
-3. `node mmf.js login` → approve in the browser. MMF's OAuth page has no Google
-   button, so a Google-only account needs a password first ("Forgot password?").
+3. `node mmf.js login` → your browser opens MMF's login page → log in and
+   approve. The downloader then keeps its own login token (in `data\`, never
+   committed) and refreshes it by itself.
+
+   **Signed up with Google? You'll need a password first.** The downloader uses
+   MMF's official API, and apps using that API must log you in through MMF's own
+   app-login page (`auth.myminifactory.com`). MMF decides what that page offers,
+   and it is not the same as the main website's sign-in: it offers email and
+   password, or Facebook, but **no "Sign in with Google"** (as of October 2026). The downloader can't add a Google button; it only sends you to MMF's
+   page.
+
+   <img src="docs/mmf-oauth-login.png" alt="MMF's app-login page: username/email and password, Login via Facebook, Register, Forgot password? - no Google sign-in" width="300">
+
+   An account created with "Sign in with Google" never had an MMF password, so
+   there's nothing to type in the Password box. To get one:
+   1. On that page, click **Forgot password?** and enter the email address your
+      MMF account uses (your Google email).
+   2. Open MMF's email and set a password.
+   3. Back on the login page, log in with that email and the new password.
+
+   If your MMF account is linked to Facebook, **Login via Facebook** works too.
 4. Chrome → `chrome://extensions` → turn on **Developer mode** → **Load unpacked**
    → pick the `extension` folder. Pin "MMF Downloader" to the toolbar; clicking it
    opens the floating dashboard (📌 keeps it on top, Windows).
