@@ -1,11 +1,8 @@
 {
   "name": "mmf-downloader",
-  "version": "1.0.4",
-  "description": "Archive a MyMiniFactory library locally.",
+  "version": "2.0.0",
+  "description": "Chrome extension that archives your MyMiniFactory library into a folder you choose.",
   "type": "module",
-  "bin": {
-    "mmf": "./mmf.js"
-  },
   "engines": {
     "node": ">=20"
   },

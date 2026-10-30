@@ -1,4 +1,5 @@
-// File and folder name helpers.
+// File and folder name helpers. Shared by the extension and the Node tools:
+// no Node imports here.
 
 // Strips characters Windows forbids in names and trims trailing dots/spaces.
 export function safeName(name, maxLen = 120) {

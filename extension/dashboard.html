@@ -27,8 +27,20 @@
   button { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--text); border-radius: 7px; padding: 6px 12px; cursor: pointer; }
   button:hover:not(:disabled) { border-color: var(--muted); }
   button:disabled { opacity: .45; cursor: default; }
-  #pin { padding: 6px 9px; filter: grayscale(1); opacity: .6; }
-  #pin.on { filter: none; opacity: 1; border-color: var(--accent); background: var(--row-hover); }
+  #settingsBtn { padding: 6px 9px; }
+  #settingsBtn.on, #folder.warn { border-color: var(--warn); }
+  #folder { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .settings { margin-top: 10px; padding: 10px; border: 1px solid var(--line); border-radius: 7px; display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; }
+  .settings label { display: flex; gap: 6px; align-items: center; color: var(--muted); }
+  .settings .wide { flex: 1 1 100%; }
+  .settings label.wide input { flex: 1; width: auto; }
+  .settings summary { cursor: pointer; color: var(--text); }
+  .capwarn { flex: 1 1 100%; color: var(--warn); background: var(--warn-bg); border-radius: 6px; padding: 6px 10px; font-size: 12px; }
+  .creatorhint { color: var(--muted); font-size: 12px; margin: 6px 0; }
+  .creatorlist { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 2px 14px; max-height: 260px; overflow: auto; padding: 4px 2px; }
+  .creatorlist label { display: flex; gap: 6px; align-items: center; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .creatorlist small { color: var(--muted); }
+  .settings input { font: inherit; padding: 4px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--text); width: 80px; }
   button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
   .bar { height: 8px; border-radius: 4px; background: var(--line); overflow: hidden; margin: 12px 0 6px; }
   .bar > div { height: 100%; width: 0; background: var(--accent); transition: width .4s; }
@@ -86,7 +98,8 @@
     <div class="title">
       <span id="dot" class="dot"></span>
       <h1>MMF Downloader</h1>
-      <button id="pin" title="Keep this window on top">📌</button>
+      <button id="folder" title="Your archive folder">📁 Pick folder</button>
+      <button id="settingsBtn" title="Settings">⚙</button>
       <button id="historyBtn" title="What was downloaded or failed, and when">History</button>
       <button id="sync">Sync library</button>
       <button id="start" class="primary">Start</button>
@@ -102,7 +115,19 @@
       <span id="eta"></span>
       <span id="failed"></span>
     </div>
-    <div class="msgrow"><div id="msg" class="msg">Connecting...</div><button id="startBridge" class="hidden" title="Opens the bridge window (node mmf.js serve)">Start bridge</button></div>
+    <div class="msgrow"><div id="msg" class="msg">Connecting...</div><button id="allowFolder" class="hidden" title="Chrome asks once per folder; choose &quot;Allow on every visit&quot;">Allow folder</button></div>
+    <div id="settings" class="settings hidden">
+      <label>Downloads per hour <input id="setCap" type="number" min="1" max="1000"></label>
+      <label class="wide">Full path of the archive folder (optional, for copied locations) <input id="setPath" type="text" placeholder="e.g. Z:\Downloads\…\MMF"></label>
+      <div id="capWarn" class="capwarn hidden">⚠ Above 150 an hour, MMF has been reported to start refusing downloads or flagging accounts. 120 is the safe default.</div>
+      <label>If MMF refuses a download, retry after <input id="setRetry" type="number" min="5" max="120"> min</label>
+      <details id="excludeBox" class="wide">
+        <summary>Skip these creators <span id="excludeCount"></span></summary>
+        <div class="creatorhint">Ticked creators are left out of the download list (e.g. ones that moved off MMF). Takes effect at the next Sync.</div>
+        <div id="creatorList" class="creatorlist"></div>
+      </details>
+      <div class="creatorhint wide">Changes save as you make them.</div>
+    </div>
   </header>
   <div class="toolbar" id="toolbar">
     <input id="search" type="search" placeholder="Filter creators, releases, models...">
@@ -120,6 +145,6 @@
   <div class="selsum" id="selsum"></div>
   <div class="tree" id="tree"></div>
   <div class="history hidden" id="history"></div>
-  <script src="dashboard.js"></script>
+  <script type="module" src="dashboard.js"></script>
 </body>
 </html>

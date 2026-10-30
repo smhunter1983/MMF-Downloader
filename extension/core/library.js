@@ -1,14 +1,12 @@
-// The owned-library list. MMF's official API has no "my library" endpoint, so
-// the list comes from the website's internal endpoint, saved by hand from a
-// logged-in browser:
+// The owned-library list comes from the website's internal endpoint, read
+// through the logged-in browser:
 //   https://www.myminifactory.com/api/data-library/objectPreviews
+// Shared by the extension and the Node tools: no Node imports here.
 //
 // One object can appear in several rows (e.g. a Tribe month AND a creator
 // release group). We keep every membership so the bundle folder can be chosen
 // deliberately instead of by whichever row came first.
 
-import { readFile } from 'node:fs/promises';
-import { LIBRARY_PATH, readJson, writeJson } from './config.js';
 import { safeName } from './names.js';
 
 export const LIBRARY_URL = 'https://www.myminifactory.com/api/data-library/objectPreviews';
@@ -59,30 +57,6 @@ export function buildEntries(rows) {
     if (!e.memberships.some((x) => JSON.stringify(x) === JSON.stringify(m))) e.memberships.push(m);
   }
   return [...byId.values()];
-}
-
-export async function importLibrary(savedFile, { outPath = LIBRARY_PATH } = {}) {
-  const text = (await readFile(savedFile, 'utf8')).replace(/^﻿/, '');
-  if (text.trimStart().startsWith('<')) {
-    throw new Error('That file is a web page, not JSON. Make sure you were logged in when you saved it.');
-  }
-  const raw = JSON.parse(text);
-  const list = Array.isArray(raw) ? raw : raw.items ?? raw.data ?? raw.objects;
-  if (!Array.isArray(list)) {
-    throw new Error(`Unexpected shape. Top-level keys: ${Object.keys(raw).join(', ')}`);
-  }
-  const entries = buildEntries(list);
-  await writeJson(outPath, { importedAt: new Date().toISOString(), entries });
-  return { rawCount: list.length, entries, sample: list.slice(0, 2) };
-}
-
-export async function loadLibrary() {
-  const lib = await readJson(LIBRARY_PATH);
-  if (!lib) throw new Error('No library imported yet. Run: node mmf.js library <saved-file.json>');
-  if (lib.entries.some((e) => !e.memberships)) {
-    throw new Error('Library was imported by an older version. Re-run: node mmf.js library data\\objectPreviews.json');
-  }
-  return lib.entries;
 }
 
 // Creators whose content lives elsewhere (config "excludeCreators"),

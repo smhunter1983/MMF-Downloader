@@ -4,11 +4,11 @@ import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  parseRelease, buildEntries, importLibrary, applyExclusions, deriveGroupTitles, bundleFor, destinationFor,
-} from '../src/library.js';
-import { safeName } from '../src/names.js';
-import { isMmfHost, looksLikeHtml } from '../src/http.js';
-import { resolveNameClashes, itemsForObject, dedupeItems } from '../src/plan.js';
+  parseRelease, buildEntries, applyExclusions, deriveGroupTitles, bundleFor, destinationFor,
+} from '../extension/core/library.js';
+import { safeName } from '../extension/core/names.js';
+import { looksLikeHtml } from '../extension/core/zip.js';
+import { resolveNameClashes, itemsForObject, dedupeItems } from '../extension/core/items.js';
 
 test('parseRelease splits the key:value string', () => {
   assert.deepEqual(parseRelease('type:tribes-tier;owner:1448840;tribe:772;tier:1845;yearmonth:202606'), {
@@ -22,11 +22,6 @@ test('safeName removes Windows-illegal characters and trailing dots', () => {
   assert.equal(safeName('   '), 'unnamed');
   assert.equal(safeName('CON.zip'), '_CON.zip');
   assert.equal(safeName('Console.zip'), 'Console.zip');
-});
-
-test('isMmfHost only matches MMF domains', () => {
-  assert.ok(isMmfHost('https://www.myminifactory.com/download/1'));
-  assert.ok(!isMmfHost('https://myminifactory.com.evil.net/x'));
 });
 
 test('looksLikeHtml catches error pages', () => {
@@ -69,13 +64,8 @@ test('bundleFor picks the right folder per source', () => {
   assert.deepEqual(destinationFor(entries[1], titles), ['Rescale', '2024-10 - Hollow Graves']);
 });
 
-test('importLibrary writes entries and applyExclusions filters creators', async (t) => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'mmf-'));
-  t.after(() => rm(dir, { recursive: true, force: true }));
-  const file = path.join(dir, 'lib.json');
-  await writeFile(file, '﻿' + JSON.stringify(ROWS));
-  const { entries, rawCount } = await importLibrary(file, { outPath: path.join(dir, 'library.json') });
-  assert.equal(rawCount, ROWS.length);
+test('applyExclusions filters creators (case and spaces ignored)', () => {
+  const entries = buildEntries(ROWS);
   const { kept, excluded } = applyExclusions(entries, [' rescale ']);
   assert.equal(excluded.length, 3);
   assert.equal(kept.length, 5);
@@ -143,23 +133,6 @@ test('deriveGroupTitles prefers synced release names', () => {
   assert.equal(deriveGroupTitles(entries)['64192'], 'Release 64192');
 });
 
-test('fetchWithRetry survives a dropped connection', async (t) => {
-  const http = await import('node:http');
-  const { fetchWithRetry } = await import('../src/http.js');
-  let calls = 0;
-  const server = http.createServer((req, res) => {
-    calls++;
-    if (calls === 1) return req.socket.destroy();
-    res.end('{"ok":true}');
-  });
-  await new Promise((r) => server.listen(0, '127.0.0.1', r));
-  t.after(() => server.close());
-  const retries = [];
-  const res = await fetchWithRetry(`http://127.0.0.1:${server.address().port}/`, {}, { onRetry: (r) => retries.push(r.status) });
-  assert.deepEqual(await res.json(), { ok: true });
-  assert.deepEqual(retries, ['network error']);
-});
-
 test('loose-parts-only models become one whole-model zip; archives and PDFs stay as-is', () => {
   const entry = { id: 143070, name: 'Wendigo', creator: 'Rescale' };
   const dl = (n) => ({ id: n.length, filename: n, size: '10', download_url: 'https://www.myminifactory.com/download/1?x' });
@@ -173,23 +146,3 @@ test('loose-parts-only models become one whole-model zip; archives and PDFs stay
   assert.equal(itemsForObject(entry, { files: { items: [dl('book1.pdf'), dl('book22.pdf')] } }, ['R', 'F']).length, 2);
 });
 
-test('API refreshes the login once on a 401, then retries', async (t) => {
-  const http = await import('node:http');
-  const { createApi } = await import('../src/api.js');
-  const seen = [];
-  const server = http.createServer((req, res) => {
-    seen.push(req.headers.authorization);
-    if (req.headers.authorization === 'Bearer old') { res.writeHead(401); return res.end('{}'); }
-    res.writeHead(200, { 'content-type': 'application/json' });
-    res.end('{"ok":true}');
-  });
-  await new Promise((r) => server.listen(0, '127.0.0.1', r));
-  t.after(() => server.close());
-  const realFetch = globalThis.fetch;
-  const port = server.address().port;
-  globalThis.fetch = (url, init) => realFetch(String(url).replace('https://www.myminifactory.com', `http://127.0.0.1:${port}`), init);
-  t.after(() => { globalThis.fetch = realFetch; });
-  const api = createApi({ apiDelayMs: 0 }, { log: () => {}, getAccessToken: async (cfg, o) => (o?.force ? 'new' : 'old') });
-  assert.deepEqual(await api.get('/user'), { ok: true });
-  assert.deepEqual(seen, ['Bearer old', 'Bearer new']);
-});

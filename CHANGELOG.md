@@ -1,5 +1,27 @@
 # Changelog
 
+## 2.0.0 (2026-10-29)
+
+Everything now runs inside Chrome: no Node, no bridge window, no command
+line, no MyMiniFactory developer app or login step.
+
+- Pick your archive folder once (📁); the extension writes there directly.
+  Chrome's "Allow on every visit" keeps the permission across restarts.
+- Downloads run in a hidden background page: the dashboard can be closed,
+  and a run interrupted by a Chrome restart resumes by itself.
+- File lists come from each model's MMF page (no official API needed).
+- Files are written in 16 MB batches while the next batch downloads.
+- A model with a single loose part is saved as that file (e.g. `.stl`)
+  instead of failing as "not a zip".
+- Settings (⚙) save as you change them: downloads per hour (warns above
+  150), retry wait after a refusal (at least 5 minutes), an optional full
+  folder path for copied locations, and a checklist of creators to skip.
+- NEW badges clear once a model is downloaded.
+- ✓ copies the file location (an extension can't open Explorer), and the
+  📌 pin is gone (same reason).
+- Removed: the Node bridge, `mmf.js`, `install-host` and the Start bridge
+  button. 1.x remains available as the v1.0.4 release.
+
 ## 1.0.4 (2026-10-29)
 
 - If MMF refuses a download (SERVER_FORBIDDEN), wait 10 minutes and retry by

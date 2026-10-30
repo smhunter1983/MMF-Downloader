@@ -28,14 +28,16 @@
   this is a copy, not a recompress: I/O bound.
 
 .EXAMPLE
-  .\Combine-RescalePairs.ps1                                 # plan only
-  .\Combine-RescalePairs.ps1 -Execute                        # do it, park originals
-  .\Combine-RescalePairs.ps1 -Execute -DeleteOriginals
-  .\Combine-RescalePairs.ps1 -Execute -Only "2024 - 07*"     # one release folder
+  $r = "Z:\MMF\Rescale Miniatures"
+  .\Combine-RescalePairs.ps1 -Root $r                              # plan only
+  .\Combine-RescalePairs.ps1 -Root $r -Execute                     # do it, park originals
+  .\Combine-RescalePairs.ps1 -Root $r -Execute -DeleteOriginals
+  .\Combine-RescalePairs.ps1 -Root $r -Execute -Only "2024 - 07*"  # one release folder
 #>
 [CmdletBinding()]
 param(
-  # Default: <archiveRoot from config.local.json>\Rescale Miniatures
+  # The "Rescale Miniatures" folder inside your archive, e.g.
+  # "Z:\MMF\Rescale Miniatures". (1.x installs: defaults to archiveRoot from config.local.json.)
   [string]$Root,
   [string]$SevenZip = "C:\Program Files\7-Zip\7z.exe",
   [switch]$Execute,
@@ -47,7 +49,7 @@ param(
 $ErrorActionPreference = "Stop"
 if (-not $Root) {
   $cfgPath = Join-Path (Split-Path $PSScriptRoot -Parent) "config.local.json"
-  if (-not (Test-Path $cfgPath)) { throw "Pass -Root, or create config.local.json (archiveRoot) first." }
+  if (-not (Test-Path $cfgPath)) { throw 'Pass -Root "<your archive folder>\Rescale Miniatures"' }
   $Root = Join-Path (Get-Content -Raw $cfgPath | ConvertFrom-Json).archiveRoot "Rescale Miniatures"
 }
 if (-not (Test-Path $SevenZip)) { throw "7-Zip not found at $SevenZip (install it, or pass -SevenZip)" }

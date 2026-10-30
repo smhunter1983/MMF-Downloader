@@ -1,7 +1,9 @@
 // Floating dashboard: progress, controls, and a Creator > Release > Model tree
 // where each item can be set to Get or Skip before (or during) downloading.
+// 2.0: talks to the engine in the extension's hidden background page.
 
-const BRIDGE = 'http://127.0.0.1:8766';
+import * as store from './engine/store.js';
+
 const $ = (id) => document.getElementById(id);
 const expanded = new Set(); // "c:<creator>" and "b:<creator>/<bundle>"
 let tree = [];
@@ -13,67 +15,54 @@ let history = [];
 
 const fmt = (b) => (b >= 1073741824 ? `${(b / 1073741824).toFixed(1)} GB` : b >= 1048576 || !b ? `${(b / 1048576).toFixed(0)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`);
 
-async function bridge(pathname, body) {
-  const res = await fetch(`${BRIDGE}${pathname}`, {
-    method: body === undefined ? 'GET' : 'POST',
-    headers: { 'X-MMF-Bridge': '1', 'Content-Type': 'application/json' },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  if (!res.ok) throw new Error(`Bridge HTTP ${res.status}`);
-  return res.json();
+let engineReady = null;
+async function engine(cmd, args) {
+  engineReady ??= chrome.runtime.sendMessage({ to: 'background', cmd: 'ensureEngine' });
+  await engineReady;
+  const r = await chrome.runtime.sendMessage({ to: 'engine', cmd, args });
+  if (r === undefined) throw new Error('The engine did not answer');
+  return r;
 }
 
-// ---------- start bridge (native messaging helper) ----------
-
-const HOST_NAME = 'com.mmf_downloader.bridge';
-let startingBridge = false;
-let bridgeError = null;
-
-async function startBridge() {
-  if (startingBridge) return;
-  startingBridge = true;
-  $('startBridge').disabled = true;
-  $('msg').textContent = 'Starting the bridge... (a "MMF Downloader bridge" window will open)';
-  $('msg').className = 'msg';
-  try {
-    const r = await chrome.runtime.sendNativeMessage(HOST_NAME, { cmd: 'startBridge' });
-    bridgeError = r?.ok ? null : `Couldn't start the bridge: ${r?.error ?? 'no reply'}`;
-  } catch (err) {
-    // Chrome's own wording, so the real cause is visible.
-    bridgeError = `Couldn't start the bridge (Chrome says: "${err.message}"). `
-      + 'If it says "not found", run  node mmf.js install-host  in the MMF Downloader folder and reload the extension. Or start it by hand: node mmf.js serve';
-  } finally {
-    startingBridge = false;
-    $('startBridge').disabled = false;
-    await refreshStatus();
-  }
+// A short message that the 2-second status refresh leaves alone for a while.
+let notice = null;
+function showNotice(text, warn = false, ms = 8000) {
+  notice = { text, warn, until: Date.now() + ms };
+  $('msg').textContent = text;
+  $('msg').className = warn ? 'msg warn' : 'msg';
 }
+const showError = (text) => showNotice(text, true, 12000);
 
 // ---------- status header ----------
 
+let lastStatus = null;
+let lastPlanSeen = null;
+
 async function refreshStatus() {
-  const s = await chrome.storage.local.get({ running: false, message: 'Idle', resumeAt: null });
   let st = null;
-  try { st = await bridge('/status'); } catch { /* offline */ }
-
-  $('dot').className = `dot ${st ? 'ok' : 'bad'}`;
-  $('start').disabled = s.running || !st;
-  $('pause').disabled = !s.running;
-  $('sync').disabled = !st;
-  document.documentElement.style.setProperty('--header-h', `${$('header').offsetHeight}px`);
-
-  $('startBridge').classList.toggle('hidden', !!st);
-  if (!st) {
-    if (!startingBridge) {
-      $('msg').textContent = bridgeError ?? 'Bridge offline. Click "Start bridge", or in the MMF Downloader folder run:  node mmf.js serve';
-      $('msg').className = 'msg warn';
-    }
-    return;
+  try { st = await engine('status'); } catch (e) { showError(`Can't reach the engine: ${e.message}. Try reloading the extension.`); return; }
+  if (st.ok === false && !st.summary) { showError(st.error); return; }
+  lastStatus = st;
+  // A finished Sync changes the list: redraw it now rather than at the next poll.
+  if (st.lastPlan?.at && st.lastPlan.at !== lastPlanSeen && !st.planning) {
+    lastPlanSeen = st.lastPlan.at;
+    historyMode ? loadHistory() : loadTree();
+    if (!$('settings').classList.contains('hidden')) loadCreators();
   }
-  bridgeError = null;
+  const f = st.folder;
+  $('dot').className = `dot ${f.picked && f.permission === 'granted' ? 'ok' : 'bad'}`;
+  $('folder').textContent = f.picked ? `📁 ${f.name}` : '📁 Pick folder';
+  $('folder').title = f.picked ? `Archive folder: ${f.name} (click to change)` : 'Pick the folder your archive lives in';
+  $('folder').classList.toggle('warn', !f.picked || f.permission !== 'granted');
+  $('allowFolder').classList.toggle('hidden', !(f.picked && f.permission !== 'granted'));
+  $('pause').disabled = !st.running;
+  document.documentElement.style.setProperty('--header-h', `${$('header').offsetHeight}px`);
+  if (!$('settings').contains(document.activeElement)) fillSettings(st.settings);
+
   const sum = st.summary;
-  $('start').disabled = s.running || !!st.planning || (!st.batch && !st.upcoming.files);
-  $('sync').disabled = s.running || !!st.planning;
+  const folderOk = f.picked && f.permission === 'granted';
+  $('start').disabled = st.running || !!st.planning || !folderOk || (!st.batch && !st.upcoming.files);
+  $('sync').disabled = st.running || !!st.planning || !folderOk;
   $('sync').textContent = st.planning ? 'Syncing...' : 'Sync library';
   // The bar, file count, GB and ETA follow the current batch (what Start set
   // going). Between batches they show what the next Start would download.
@@ -93,30 +82,47 @@ async function refreshStatus() {
   $('failed').textContent = sum.failed ? `${sum.failed} failed` : '';
   $('retry').classList.toggle('hidden', !sum.failed);
 
-  let text = st.paused ? `Paused: ${st.pauseReason}` : s.message;
-  const holding = s.running && !st.paused && st.hold && Date.parse(st.hold.until) > Date.now() && !st.current;
-  const waitingForCap = s.running && !st.paused && !holding && s.resumeAt && s.resumeAt > Date.now() && !st.current;
+  const clock = (ms) => { const secs = Math.ceil(ms / 1000); return `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`; };
+  const at = (t) => new Date(t).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  let text = st.paused ? `Paused: ${st.pauseReason}` : st.message;
+  let warn = st.paused;
+  const holding = st.running && st.hold && Date.parse(st.hold.until) > Date.now() && !st.current;
+  const waitingForCap = st.running && !holding && st.rate.waitMs > 0 && !st.current;
   if (holding) {
     const until = Date.parse(st.hold.until);
-    const secs = Math.ceil((until - Date.now()) / 1000);
-    text = `${st.hold.reason}. Retrying by itself in ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}, at ${new Date(until).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}. If it's refused again, the run pauses.`;
-  }
-  if (waitingForCap) {
-    const secs = Math.ceil((s.resumeAt - Date.now()) / 1000);
-    text = `Hourly limit reached (${st.rate.cap} downloads). Resumes automatically in ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}, at ${new Date(s.resumeAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}. Leave Chrome and the bridge open.`;
+    text = `${st.hold.reason}. Retrying by itself in ${clock(until - Date.now())}, at ${at(until)}. If it's refused again, the run pauses.`;
+    warn = true;
+  } else if (waitingForCap) {
+    text = `Hourly limit reached (${st.rate.cap} downloads). Resumes by itself in ${clock(st.rate.waitMs)}, at ${at(Date.now() + st.rate.waitMs)}. You can close this window; keep Chrome open.`;
+    warn = true;
   }
   const waiting = sum.pending + sum.active;
-  if (!st.paused && !s.running && waiting) text = `Ready: ${waiting.toLocaleString()} file${waiting === 1 ? '' : 's'} to download. Press Start.`;
-  if (!st.paused && st.current && s.running) text = `Downloading ${st.current.label} (${fmt(st.current.size || 0)})`;
-  if (!st.batch && !st.upcoming.files && !st.paused && st.lastBatch) {
-    const lb = st.lastBatch;
-    const when = new Date(lb.finishedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-    text = `Last batch done ✓ ${lb.files.toLocaleString()} file${lb.files === 1 ? '' : 's'}, ${fmt(lb.bytes)} (finished ${when})${lb.failed ? `, ${lb.failed} failed` : ''}. Check more models to start another.`;
+  if (!st.paused && !st.running && waiting) text = `Ready: ${waiting.toLocaleString()} file${waiting === 1 ? '' : 's'} to download. Press Start.`;
+  if (st.current && st.running) {
+    const of = st.current.size ? ` of ${fmt(st.current.size)}` : '';
+    text = `Downloading ${st.current.label} (${fmt(st.current.bytes)}${of}). You can close this window; keep Chrome open.`;
   }
-  if (!sum.total && !sum.skipped) text = `${s.message}\nNo download queue yet: click "Sync library".`;
+  if (!st.batch && !st.upcoming.files && !st.paused && !st.running && st.lastBatch) {
+    const lb = st.lastBatch;
+    text = `Last batch done ✓ ${lb.files.toLocaleString()} file${lb.files === 1 ? '' : 's'}, ${fmt(lb.bytes)} (finished ${at(lb.finishedAt)})${lb.failed ? `, ${lb.failed} failed` : ''}. Check more models to start another.`;
+  }
+  const planNewer = st.lastPlan && (!st.lastBatch || Date.parse(st.lastPlan.at) > Date.parse(st.lastBatch.finishedAt));
+  if (planNewer && !st.planning && !st.running && Date.now() - Date.parse(st.lastPlan.at) < 10 * 60 * 1000) {
+    const lp = st.lastPlan;
+    if (!lp.ok) { text = `Sync failed: ${lp.error}`; warn = true; }
+    else if (!st.batch) {
+      text = `Library synced: ${lp.models.toLocaleString()} models${lp.newModels ? `, ${lp.newModels} new` : ''}. `
+        + (lp.pending ? `${lp.pending.toLocaleString()} file${lp.pending === 1 ? '' : 's'} ready to download (new models are checked).` : 'Nothing new to download.')
+        + (lp.errors ? ` ${lp.errors} model${lp.errors === 1 ? '' : 's'} couldn't be read this time (sync again later).` : '');
+    }
+  }
+  if (!sum.total && !sum.skipped && !st.planning) text = f.picked ? 'No download list yet: click "Sync library".' : 'Start by picking your archive folder (📁), then click "Sync library".';
+  if (f.picked && f.permission !== 'granted') { text = 'Chrome needs your OK to use the archive folder again. Click "Allow folder" and choose "Allow on every visit".'; warn = true; }
   if (st.planning) text = `Updating the download list: ${st.planning.line}`;
+  if (notice && Date.now() < notice.until) return; // keep the notice up
+  notice = null;
   $('msg').textContent = text;
-  $('msg').className = st.paused || waitingForCap || holding ? 'msg warn' : 'msg';
+  $('msg').className = warn || holding || waitingForCap ? 'msg warn' : 'msg';
 }
 
 function etaText(hours) {
@@ -154,18 +160,23 @@ const sizeText = (st) => (st.unsized === st.files ? 'size unknown' : `${fmt(st.b
 async function setSkip(objs, skip) {
   const ids = objs.map((o) => o.id);
   if (!ids.length) return;
-  await bridge('/skip', { objectIds: ids, skip });
+  const r = await engine('setSkip', { objectIds: ids, skip });
+  if (r.ok === false) { showError(r.error); return; }
   for (const o of objs) o.skip = skip;
   renderTree();
   refreshStatus();
 }
 
-async function reveal(payload) {
-  const r = await bridge('/reveal', payload).catch((err) => ({ ok: false, error: err.message }));
-  if (!r.ok) {
-    $('msg').textContent = `Can't show in Explorer: ${r.error}`;
-    $('msg').className = 'msg warn';
-  }
+// An extension can't open Explorer, so: copy where it is (inside your folder).
+async function reveal(where) {
+  const r = await engine('locate', where).catch((e) => ({ ok: false, error: e.message }));
+  if (!r.ok) { showError(r.error); return; }
+  const base = (lastStatus?.settings?.archivePath ?? '').trim().replace(/[\\/]+$/, '');
+  const rel = [base || (lastStatus?.folder?.name ?? 'archive'), ...r.parts].join('\\');
+  await navigator.clipboard.writeText(rel).catch(() => {});
+  showNotice(base
+    ? `Copied: ${rel}${r.packed ? '  (inside this combined zip)' : ''}. Paste it into Explorer's address bar. (Chrome extensions can't open Explorer themselves.)`
+    : `Copied: ${rel}${r.packed ? '  (inside this combined zip)' : ''}. Tip: put your folder's full path in ⚙ and copied locations open straight from Explorer's address bar.`, false, 12000);
 }
 
 function makeRow({ level, key, label, objs, expandable, where }) {
@@ -197,7 +208,7 @@ function makeRow({ level, key, label, objs, expandable, where }) {
     const badge = document.createElement('span');
     badge.className = 'new';
     badge.textContent = level === 2 ? 'NEW' : `${st.newN} new`;
-    badge.title = `New in your library since ${new Date(newSince).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}`;
+    badge.title = `New in your library since ${new Date(newSince).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}, not downloaded yet`;
     name.append(' ', badge);
   }
   if (expandable) { name.style.cursor = 'pointer'; name.onclick = twisty.onclick; }
@@ -214,7 +225,7 @@ function makeRow({ level, key, label, objs, expandable, where }) {
   if (text === '✓') state.title = 'Already downloaded';
   if (text && objs.some((o) => o.doneFiles > 0)) {
     state.classList.add('link');
-    state.title = `${text === '✓' ? 'Already downloaded. ' : ''}Show in Explorer`;
+    state.title = `${text === '✓' ? 'Already downloaded. ' : ''}Click to copy where it is`;
     state.onclick = () => reveal(where);
   }
 
@@ -277,7 +288,7 @@ function renderTree() {
 
 async function loadTree() {
   try {
-    const r = await bridge('/tree');
+    const r = await engine('tree');
     tree = r.tree;
     newSince = r.newSince ?? null;
   } catch {
@@ -286,47 +297,94 @@ async function loadTree() {
   renderTree();
 }
 
-// ---------- pin on top ----------
-
-// The bridge finds this window by a one-time title, then the title goes back.
-async function setPinned(pinned) {
-  const original = document.title;
-  const token = `MMF-PIN-${Math.random().toString(36).slice(2, 12).padEnd(10, '0')}`;
-  document.title = token;
-  let r;
-  try {
-    r = await bridge('/pin', { title: token, pinned });
-  } catch (err) {
-    r = { ok: false, error: err.message };
-  } finally {
-    document.title = original;
-  }
-  if (!r.ok) {
-    $('msg').textContent = `Can't pin the window: ${r.error}`;
-    $('msg').className = 'msg warn';
-    return;
-  }
-  $('pin').classList.toggle('on', pinned);
-  $('pin').title = pinned ? 'On top: click to unpin' : 'Keep this window on top';
-}
-
-$('pin').onclick = () => setPinned(!$('pin').classList.contains('on'));
-
 // ---------- controls ----------
 
-$('start').onclick = async () => { await chrome.runtime.sendMessage({ cmd: 'start' }); refreshStatus(); };
-$('pause').onclick = async () => { await chrome.runtime.sendMessage({ cmd: 'pause' }); refreshStatus(); };
-$('startBridge').onclick = async () => { await startBridge(); if (!bridgeError) loadTree(); };
-$('retry').onclick = async () => { await chrome.runtime.sendMessage({ cmd: 'retryFailed' }); refreshStatus(); loadTree(); };
-$('sync').onclick = async () => {
-  $('sync').disabled = true;
-  $('sync').textContent = 'Syncing...';
-  await chrome.runtime.sendMessage({ cmd: 'syncLibrary' });
-  $('sync').textContent = 'Sync library';
-  refreshStatus();
-  loadTree();
-};
+async function act(cmd, args) {
+  const r = await engine(cmd, args).catch((e) => ({ ok: false, error: e.message }));
+  if (r?.ok === false) showError(r.error);
+  await refreshStatus();
+  return r;
+}
+$('start').onclick = () => act('start');
+$('pause').onclick = () => act('pause');
+$('retry').onclick = async () => { await act('retryFailed'); loadTree(); };
+$('sync').onclick = async () => { $('sync').disabled = true; await act('sync'); };
 $('sync').title = 'Fetch your MMF library and add anything new to the download list';
+
+// ---------- archive folder ----------
+
+$('folder').onclick = async () => {
+  try {
+    const handle = await showDirectoryPicker({ id: 'mmf-archive', mode: 'readwrite' });
+    await store.set('dir', handle);
+    await engine('folderChanged');
+  } catch (e) {
+    if (e.name !== 'AbortError') showError(`Couldn't use that folder: ${e.message}`);
+  }
+  refreshStatus();
+};
+$('allowFolder').onclick = async () => {
+  const handle = await store.get('dir');
+  if (handle) await handle.requestPermission({ mode: 'readwrite' }).catch(() => {});
+  await engine('folderChanged');
+  refreshStatus();
+};
+
+// ---------- settings ----------
+
+const RISKY_CAP = 150; // community reports: MMF starts refusing / flagging above this
+const showCapWarning = () => $('capWarn').classList.toggle('hidden', !(Number($('setCap').value) > RISKY_CAP));
+$('setCap').oninput = showCapWarning;
+
+function fillSettings(st) {
+  if (!st) return;
+  $('setCap').value = st.maxDownloadsPerHour;
+  showCapWarning();
+  $('setRetry').value = st.forbiddenRetryMinutes;
+  $('setPath').value = st.archivePath ?? '';
+}
+
+// Checklist of every creator in your MMF library; ticked = left out.
+async function loadCreators() {
+  const r = await engine('creators').catch(() => ({ creators: [] }));
+  const list = r.creators ?? [];
+  const esc2 = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  $('creatorList').innerHTML = list.length
+    ? list.map((c, n) => `<label title="${esc2(c.name)}"><input type="checkbox" data-n="${n}"${c.skipped ? ' checked' : ''}> ${esc2(c.name)} ${c.models != null ? `<small>${c.models}</small>` : ''}</label>`).join('')
+    : '<div class="creatorhint">Click "Sync library" once to list your creators.</div>';
+  $('creatorList').dataset.names = JSON.stringify(list.map((c) => c.name));
+  const n = list.filter((c) => c.skipped).length;
+  $('excludeCount').textContent = n ? `(${n} skipped)` : '';
+}
+const checkedCreators = () => {
+  const names = JSON.parse($('creatorList').dataset.names ?? '[]');
+  return [...$('creatorList').querySelectorAll('input:checked')].map((b) => names[Number(b.dataset.n)]);
+};
+
+$('settingsBtn').onclick = () => {
+  $('settings').classList.toggle('hidden');
+  if (!$('settings').classList.contains('hidden')) loadCreators();
+  $('settingsBtn').classList.toggle('on', !$('settings').classList.contains('hidden'));
+  document.documentElement.style.setProperty('--header-h', `${$('header').offsetHeight}px`);
+};
+// Settings save as soon as they change.
+async function saveSettingsNow() {
+  const cap = Math.max(1, Math.min(1000, Number($('setCap').value) || 120));
+  const retry = Math.max(5, Math.min(120, Number($('setRetry').value) || 10)); // under 5 min just gets refused again
+  const exclude = checkedCreators();
+  await act('saveSettings', { maxDownloadsPerHour: cap, forbiddenRetryMinutes: retry, excludeCreators: exclude, archivePath: $('setPath').value.trim() });
+  $('setCap').value = cap;
+  $('setRetry').value = retry;
+  const n = exclude.length;
+  $('excludeCount').textContent = n ? `(${n} skipped)` : '';
+  showNotice(`Saved.${n ? ` Skipping ${n} creator${n === 1 ? '' : 's'} from the next Sync.` : ''}${cap > RISKY_CAP ? ` Heads up: ${cap}/hour is above the ~${RISKY_CAP} where MMF has been reported to push back.` : ''}`, cap > RISKY_CAP, 5000);
+}
+$('setCap').onchange = saveSettingsNow;
+$('setRetry').onchange = saveSettingsNow;
+$('setPath').onchange = saveSettingsNow;
+$('creatorList').onchange = saveSettingsNow;
+
+
 $('search').oninput = (e) => { filter = e.target.value.trim().toLowerCase(); historyMode ? renderHistory() : renderTree(); };
 $('getAll').onclick = () => setSkip(visibleObjects(), false);
 $('skipAll').onclick = () => setSkip(visibleObjects(), true);
@@ -407,7 +465,7 @@ function renderHistory() {
     html.push(`<div class="hrow ${k.cls}${link ? ' link' : ''}" data-n="${n}">`
       + `<span class="time">${esc(d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }))}</span>`
       + `<span class="icon">${k.icon}</span>`
-      + `<span class="what"${link ? ' title="Show in Explorer"' : ''}>${isFile ? what : esc(what)}</span>`
+      + `<span class="what"${link ? ' title="Click to copy where it is"' : ''}>${isFile ? what : esc(what)}</span>`
       + `<span class="meta" title="${esc(meta)}">${esc(meta)}</span></div>`);
   }
   if (extra > 0) html.push(`<div class="empty">${extra.toLocaleString()} older entries not shown. Pick a creator or type a filter to narrow it down.</div>`);
@@ -418,7 +476,7 @@ function renderHistory() {
   });
   box.querySelectorAll('.hrow .creator').forEach((el) => {
     el.onclick = (ev) => {
-      ev.stopPropagation(); // not "show in Explorer"
+      ev.stopPropagation(); // not "copy location"
       $('histCreator').value = el.textContent;
       renderHistory();
     };
@@ -436,7 +494,7 @@ function fillCreators() {
 }
 
 async function loadHistory() {
-  try { history = (await bridge('/history')).events; } catch { history = []; }
+  try { history = (await engine('history')).events ?? []; } catch { history = []; }
   fillCreators();
   renderHistory();
 }
@@ -462,12 +520,17 @@ $('histCreator').onchange = renderHistory;
 let lastTree = 0;
 async function tick() {
   await refreshStatus();
-  const { running } = await chrome.storage.local.get({ running: false });
+  const running = lastStatus?.running || lastStatus?.planning;
   if (Date.now() - lastTree > (running ? 4000 : 30000)) {
     lastTree = Date.now();
     historyMode ? loadHistory() : loadTree();
   }
 }
+// The engine says when something changed; polling covers the rest.
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg?.type === 'engine-changed') refreshStatus();
+});
+
 loadTree();
 tick();
 setInterval(tick, 2000);

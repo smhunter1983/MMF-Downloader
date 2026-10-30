@@ -1,94 +1,96 @@
 # MMF Downloader
 
-Archives a MyMiniFactory library to local disk.
+A Chrome extension that archives your **MyMiniFactory library** into a folder
+you choose, organised as `Creator\Release\file`, and keeps it up to date as new
+releases come out.
 
-MMF's download links sit behind a Cloudflare browser check, so downloads go
-through **your real Chrome** (via a small extension). Everything else
-(library list, file lists, queue, verification, filing) is Node.
+Everything runs inside Chrome, using your normal logged-in MMF session. There is
+nothing else to install: no Node, no command line, no MMF developer account.
 
-```
- MMF API ──> node mmf.js plan ──> data\queue.json
-                                       │
- Chrome extension <── node mmf.js serve (localhost bridge)
-   downloads file ──> Downloads\MMF-staging ──> verified ──> archive\Creator\Bundle\
-```
+## Install
 
-Requirements: Windows (what it is tested on), Chrome, Node 20+ (no npm dependencies), a MyMiniFactory
-account with a password (see step 3), and enough disk space for your library.
-The core also runs on macOS/Linux, but the "Start bridge" button, 📌 pin and
-"show in Explorer" extras are Windows-only.
+1. Download this repository: green **Code** button → **Download ZIP**, and
+   unzip it somewhere permanent (or `git clone`). Chrome loads the extension
+   from that folder, so don't delete or move it afterwards.
+2. In Chrome, open `chrome://extensions`, turn on **Developer mode** (top
+   right), click **Load unpacked** and pick the `extension` folder.
+3. Pin **MMF Downloader** to the toolbar and click it. The dashboard opens in
+   its own window.
+4. Log in to [myminifactory.com](https://www.myminifactory.com) in Chrome if
+   you aren't already.
 
-Download: green **Code** button → **Download ZIP** on GitHub, unzip anywhere
-(or `git clone`).
+## First run
 
-## One-time setup
+1. **📁 Pick folder**: choose where your archive lives (or should live). Chrome
+   asks to let the extension edit that folder: allow it. After a Chrome
+   restart it asks once more; choose **"Allow on every visit"** and it stops
+   asking.
+2. **Sync library**: reads your MMF library (purchases, Tribe months, creator
+   releases, free downloads) and builds the download list. The first Sync
+   visits every model's page (about 1.5 s each, so a large library takes a
+   while); later Syncs only visit new models. Files already in your folder
+   are recognised and marked done.
+3. Review the **Creator ▸ Release ▸ Model** list: everything is checked
+   (Get); untick what you don't want (Skip). The filter box plus **Check
+   all / Uncheck all** work on what's shown.
+4. **Start**. You can close the dashboard; downloads carry on in the
+   background as long as Chrome is open.
 
-1. **Register an MMF app** (free): log in to MyMiniFactory, go to
-   Settings → Developers (`https://www.myminifactory.com/settings/developer`) →
-   *Register a new OAuth Application*.
-   - Client key: any unique slug, e.g. `yourname-library-archiver`
-   - Redirect URI: `http://localhost:8765/callback`
-   - The client secret arrives by email.
-2. Copy `config.example.json` to `config.local.json` and fill in `clientId`,
-   `clientSecret` and `archiveRoot` (where the archive should live).
-   `config.local.json` and `data\` are git-ignored; they never get committed.
-3. `node mmf.js login` → your browser opens MMF's login page → log in and
-   approve. The downloader then keeps its own login token (in `data\`, never
-   committed) and refreshes it by itself.
+## Day to day
 
-   **Signed up with Google? You'll need a password first.** The downloader uses
-   MMF's official API, and apps using that API must log you in through MMF's own
-   app-login page (`auth.myminifactory.com`). MMF decides what that page offers,
-   and it is not the same as the main website's sign-in: it offers email and
-   password, or Facebook, but **no "Sign in with Google"** (as of October 2026). The downloader can't add a Google button; it only sends you to MMF's
-   page.
+- **Sync library** whenever creators release something. Models it hasn't
+  seen before get a **NEW** badge (until downloaded), and **New (n)** shows
+  only those.
+- In the list, **✓** = already in your archive; **n/m** = partly downloaded.
+  Clicking either copies the file or folder location (Chrome extensions can't
+  open Explorer themselves; put your folder's full path in ⚙ and the copied
+  path opens straight from Explorer's address bar).
+- **History** shows what was downloaded, retried or failed, and when; filter
+  it by creator, type or text.
+- If Chrome closes mid-run (restart, Windows Update), the run resumes by
+  itself next time Chrome starts.
 
-   <img src="docs/mmf-oauth-login.png" alt="MMF's app-login page: username/email and password, Login via Facebook, Register, Forgot password? - no Google sign-in" width="300">
+## Settings (⚙)
 
-   An account created with "Sign in with Google" never had an MMF password, so
-   there's nothing to type in the Password box. To get one:
-   1. On that page, click **Forgot password?** and enter the email address your
-      MMF account uses (your Google email).
-   2. Open MMF's email and set a password.
-   3. Back on the login page, log in with that email and the new password.
+| Setting | Default | Meaning |
+|---|---|---|
+| Downloads per hour | 120 | Pace of downloads. Above ~150/hour MMF has been reported to refuse downloads or flag accounts, so the dashboard warns you. |
+| If MMF refuses a download, retry after | 10 min (at least 5) | MMF occasionally refuses one download in a long run. The run waits this long and retries once by itself; if it's refused again, it pauses. |
+| Full path of the archive folder | (empty) | Only used for copied locations. |
+| Skip these creators | none | A checklist of every creator in your library; ticked ones are left out (e.g. creators who moved off MMF). |
 
-   If your MMF account is linked to Facebook, **Login via Facebook** works too.
-4. Chrome → `chrome://extensions` → turn on **Developer mode** → **Load unpacked**
-   → pick the `extension` folder. Pin "MMF Downloader" to the toolbar; clicking it
-   opens the floating dashboard (📌 keeps it on top, Windows).
-5. `node mmf.js install-host` (optional, Windows): adds a **Start bridge** button
-   to the dashboard so you don't need a terminal to start the bridge. It
-   registers a small Chrome helper for your Windows user only (no admin); only
-   this extension can call it, and all it can do is open the bridge window.
-   Reload the extension afterwards. Re-run it if you move the folder.
+Settings save as you change them.
 
-## Each run
+## Folder layout
 
-1. `node mmf.js serve` and leave it running (or click **Start bridge** in the
-   dashboard if you ran `install-host`).
-2. Chrome toolbar → MMF Downloader → dashboard → **Sync library**. One click
-   pulls your library list and release names through your logged-in Chrome
-   (read-only), then builds the download list. The first time takes about 1.5
-   hours (paced, cached); after that only new models are fetched, so a new
-   bundle takes a minute or so. (`node mmf.js plan` does the same from a terminal.)
-3. Review Creator ▸ Release ▸ Model with sizes, untick anything
-   you don't want (Get/Skip; filter box + Check all / Uncheck all), then **Start**.
-   At the hourly cap it waits and resumes on its own (countdown shown).
-   ✓ in the last column = already downloaded (click it to show it in Explorer).
-   Models a Sync finds for the first time get a **NEW** badge, and **New (n)**
-   shows only those, so each month's releases stand out.
-   Choices are remembered across re-plans and can be changed mid-run.
+`Creator\Release\file`, where Release is:
+- the Tribe month (`2026-10`), or
+- the creator's release name as MMF shows it
+  (`2024 - 10 _ October release - Hollow Graves`), or
+- `Loyalty Rewards`, `Welcome Pack`, `Tribe Store`, `Purchases`,
+  `Free Downloads`, `Frontier <campaign>`.
 
-`node mmf.js status` shows progress any time. Stop/start freely; it resumes.
-**History** (dashboard header) lists what was downloaded, retried or failed,
-and when runs started, paused and finished, newest first. Filter it, search it,
-and click a download to show it in Explorer.
+What you get is exactly what the model page's Download dialog offers: the
+creator's zips as-is (Supported and Unsupported). Models with only loose parts
+come as one whole-model zip (a model with a single loose part comes as that
+file). Single-file models are named after their page title, so
+`Kevin Brightwood.zip` arrives as `Kevin Brightwood - Half-orc Barbarian.zip`.
+Files sold both inside a bundle and on their own are downloaded once and filed
+with the bundle.
 
-**Long runs:** a big library takes a day or more (the hourly cap sets the pace).
-Keep Chrome and the bridge window open, stop the PC from sleeping, and consider
-pausing Windows Update for the run (Settings → Windows Update → Pause), since an
-update restart stops it. After any restart: **Start bridge**, then **Start**.
-Nothing already filed is downloaded again.
+## Safety
+
+- Read-only on MMF: it reads your library and model pages and downloads your
+  files, like clicking Download yourself, at a gentle pace.
+- Every file is checked before it's filed: exact size, zip structure
+  (end-of-archive record), STL structure (triangle count / `endsolid`). A web
+  page instead of a file (logged out, Cloudflare check) pauses the run instead
+  of saving junk.
+- Downloads are written as `<name>.partial` next to their final place and
+  renamed only once checked. It never overwrites a different file already in
+  your archive.
+- Loose parts replaced by a whole-model zip are moved to `_to_delete`, never
+  deleted.
 
 ## Combining Rescale's Supported/Unsupported pairs (optional, Windows)
 
@@ -98,79 +100,46 @@ zips unchanged (store mode, no recompression). Needs [7-Zip](https://www.7-zip.o
 and PowerShell 7 (`pwsh`).
 
 ```
-pwsh -File tools\Combine-RescalePairs.ps1                      # dry run: shows the plan
-pwsh -File tools\Combine-RescalePairs.ps1 -Execute             # do it
-pwsh -File tools\Combine-RescalePairs.ps1 -Execute -Only "2025-0*"   # some releases
+$r = "Z:\your\archive\Rescale Miniatures"
+pwsh -File tools\Combine-RescalePairs.ps1 -Root $r              # dry run: shows the plan
+pwsh -File tools\Combine-RescalePairs.ps1 -Root $r -Execute     # do it
 ```
 
 - Dry run by default. Each new zip is built as `.partial`, tested with `7z t`,
   and checked entry by entry against the originals before it gets its name.
-- Originals are moved to `_combined_originals` in each release folder for you to
-  delete when happy (or add `-DeleteOriginals` to delete them after the checks).
-- Folders with files changed in the last hour are left alone (downloads running).
-- A stray `X.zip` beside a pair is removed only if it is byte-identical to
-  `X_Unsupported.zip`; anything unclear is listed for you to decide.
-- The downloader understands combined zips: re-running `plan` counts the files
-  inside them as done, and it never overwrites an existing file in the archive.
+- Originals are moved to `_combined_originals` in each release folder for you
+  to delete when happy (or add `-DeleteOriginals`).
+- Folders with files changed in the last hour are left alone.
+- The extension understands combined zips: files inside them count as
+  downloaded, so they are never fetched again.
 
 ## Troubleshooting
 
 | Symptom | Fix |
 |---|---|
-| "Bridge offline" | Click **Start bridge**, or run `node mmf.js serve` |
-| "Paused: Got a web page instead of the file" | Open myminifactory.com in Chrome, log in / pass the check, press **Start** |
-| `plan` says 401 / not logged in | `node mmf.js login` |
-| Start bridge says "Specified native messaging host not found" | Known issue on current Chrome. Start the bridge with `node mmf.js serve` |
-| "MMF refused a download… retrying by itself" | Nothing to do: it retries in 10 minutes. If refused again it pauses; check you're logged in to MMF, then **Start** |
-| Some files failed | Dashboard → **Retry failed** |
-| A whole-model download fails with "Not a zip" | Some very old models: download them by hand from their MMF page |
-| Files you added by hand get downloaded again | Run `node mmf.js plan` first; it marks files already on disk as done |
+| "Chrome needs your OK to use the archive folder again" | Click **Allow folder**, choose **Allow on every visit** |
+| "MMF returned a web page" / "Paused: Got a web page…" | Open myminifactory.com in Chrome, log in or pass the check, then **Sync** or **Start** again |
+| "MMF refused a download… retrying by itself" | Nothing to do: it retries after the wait. If it's refused again it pauses; check you're logged in, then **Start** |
+| Some files failed | **Retry failed** |
+| Nothing happens after a Chrome update | `chrome://extensions` → reload MMF Downloader |
 
-## Settings (config.local.json)
+## Upgrading from 1.x
 
-| Key | Default | Meaning |
-|---|---|---|
-| `archiveRoot` | | Where finished files are filed |
-| `excludeCreators` | `[]` | Creator names to skip (e.g. ones that moved off MMF) |
-| `bundleTitles` | `{}` | `{ "60627": "Hollow Graves" }` to name a release group by hand |
-| `maxDownloadsPerHour` | `120` | Hourly cap (community reports ~150/h from MMF) |
-| `apiDelayMs` | `3000` | Gap between API calls during `plan` |
-| `forbiddenRetryMinutes` | `10` | After MMF refuses a download, wait this long and retry once by itself before pausing |
-
-## Folder naming
-
-`Creator\Bundle\file.zip`, where Bundle is the earliest Tribe month (`2026-10`),
-else the creator's release name as MMF shows it (synced by the extension, e.g.
-`2024 - 10 _ October release - Hollow Graves`), else `Loyalty Rewards`,
-`Welcome Pack`, `Purchases`, `Free Downloads`, `Frontier <campaign>`.
-
-## Safety behaviour
-
-- The bridge only listens on 127.0.0.1 and only answers the extension.
-- It only moves files from the staging folder whose name matches the expected item.
-- Every file is checked (exact size from MMF, zip header and end-of-archive record).
-  Web pages (Cloudflare check, logged out) **pause the run** instead of failing everything.
-- Bad files are retried up to 3 times, then marked failed (dashboard → "Retry failed").
-- Models with only loose parts download as one whole-model zip (like the site's
-  Download button); loose files it replaces are moved to `_to_delete`, never deleted.
-- Re-running `plan` marks files already in the archive as done (gap check), and
-  moves already-filed files if their folder name changed instead of re-downloading.
-- Models sold both inside a bundle and on their own (same creator, file name and
-  exact size) are downloaded once and filed with the bundle.
+1.x used a Node "bridge" and a command line; 2.0 does everything in Chrome.
+Load the new `extension` folder, pick your existing archive folder and Sync:
+files already there are recognised and not downloaded again. Untick anything
+you had skipped in 1.x. The last 1.x release is
+[v1.0.4](https://github.com/smhunter1983/MMF-Downloader/releases/tag/v1.0.4).
 
 ## Tests
 
-`npm test`
+`npm test` (Node 20+) runs the tests for the extension's logic and engine.
 
 ## Status
 
-**1.0** (October 2026): used to archive a 2,500-file, 1.9 TB library end to end.
-
 Personal hobby project, not affiliated with MyMiniFactory. Use it only for
-models you own, and respect creators' licences. It uses MMF's official API plus
-a few of the website's own library endpoints (read through your logged-in
-browser), which may change without notice. Downloads are deliberately paced
-(120/hour by default) to be gentle on MMF.
+models you own, and respect creators' licences. It relies on MyMiniFactory's
+website (library list and model pages), which may change without notice.
 
 ## License
 

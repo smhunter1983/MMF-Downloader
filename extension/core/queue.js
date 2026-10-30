@@ -1,10 +1,9 @@
-// The download queue: one item per file to fetch, persisted to
-// data/queue.json so any stop (crash, reboot, Ctrl+C) resumes cleanly.
+// The download queue: one item per file to fetch, with Get/Skip choices,
+// progress, batches and the "what's new" tracking. Shared by the extension
+// and the Node tools: no Node imports here (disk access comes in as an
+// adapter, see mergeQueue).
 
-import path from 'node:path';
-import { stat, mkdir, rename } from 'node:fs/promises';
-import { QUEUE_PATH, readJson, writeJson } from './config.js';
-import { findPacked, zipEntryCache } from './zipdir.js';
+import { findPacked } from './zip.js';
 
 export const STATUS = Object.freeze({
   PENDING: 'pending',
@@ -15,13 +14,7 @@ export const STATUS = Object.freeze({
 
 export const MAX_ATTEMPTS = 3;
 
-export async function loadQueue(file = QUEUE_PATH) {
-  const q = await readJson(file);
-  if (!q) throw new Error('No download queue yet. Run: node mmf.js plan');
-  return q;
-}
 
-export const saveQueue = (q, file = QUEUE_PATH) => writeJson(file, q);
 
 // Creator > Bundle > Object view of the queue for the dashboard.
 // The latest sync that brought in new models: those models are "new".
@@ -54,6 +47,12 @@ export function buildTree(q) {
     if (!i.skip) o.skip = false;
     if (latest && i.firstSeen === latest) o.isNew = true;
   }
+  // NEW means "new since the last Sync and not downloaded yet".
+  for (const bundles of creators.values()) {
+    for (const objects of bundles.values()) {
+      for (const o of objects.values()) if (o.isNew && o.files && o.doneFiles === o.files) o.isNew = false;
+    }
+  }
   return [...creators].sort(([a], [b]) => a.localeCompare(b)).map(([name, bundles]) => ({
     name,
     bundles: [...bundles].sort(([a], [b]) => a.localeCompare(b)).map(([bname, objects]) => ({
@@ -75,16 +74,19 @@ export function setSkip(q, objectIds, skip) {
   return changed;
 }
 
-export const finalPath = (archiveRoot, item) => path.join(archiveRoot, ...item.dest, item.filename);
+// Where an item's file lives, as folder names under the archive root.
+export const finalParts = (item) => [...item.dest, item.filename];
 
-async function sizeOf(file) {
-  try { return (await stat(file)).size; } catch { return null; }
-}
 
 // Merges freshly planned items into an existing queue, keeping progress.
 // An item counts as done if its file is already in the archive at full size,
 // which is what makes re-planning a "gap check".
-export async function mergeQueue(existing, planned, archiveRoot, now = Date.now()) {
+/**
+ * `disk` reaches the archive: { sizeOf(parts) -> bytes|null,
+ * move(fromParts, toParts), zipEntries(parts) -> Map|null }, where parts are
+ * folder/file names under the archive root.
+ */
+export async function mergeQueue(existing, planned, disk, now = Date.now()) {
   const planTime = new Date(now).toISOString();
   const old = new Map((existing?.items ?? []).map((i) => [i.key, i]));
   // New rows for a model (e.g. a whole-model zip replacing loose parts)
@@ -100,7 +102,12 @@ export async function mergeQueue(existing, planned, archiveRoot, now = Date.now(
     }
   }
   const items = [];
-  const entriesOf = zipEntryCache();
+  const zipCache = new Map();
+  const entriesOf = async (parts) => {
+    const k = parts.join('/');
+    if (!zipCache.has(k)) zipCache.set(k, await disk.zipEntries(parts).catch(() => null));
+    return zipCache.get(k);
+  };
   for (const p of planned) {
     const prev = old.get(p.key);
     const item = { ...p, status: STATUS.PENDING, attempts: 0, error: null, skip: modelSkipped.get(p.objectId) ?? false };
@@ -113,23 +120,24 @@ export async function mergeQueue(existing, planned, archiveRoot, now = Date.now(
       item.doneAt = prev.doneAt;
       item.doneBytes = prev.doneBytes;
       item.note = prev.note;
+      // A whole-model download that MMF served as a single STL keeps the name it was saved under.
+      if (item.wholeZip && prev.status === STATUS.DONE && prev.filename) item.filename = prev.filename;
     }
     // Bundle folder or file name changed since this file was filed (e.g. a
     // group got a real title): move it rather than download it again.
     if (prev?.status === STATUS.DONE && prev.dest && prev.filename) {
-      const from = finalPath(archiveRoot, prev);
-      const to = finalPath(archiveRoot, item);
-      if (from !== to && (await sizeOf(from)) === Number(item.size) && (await sizeOf(to)) === null) {
-        await mkdir(path.dirname(to), { recursive: true });
-        await rename(from, to);
-        item.movedFrom = from;
+      const from = finalParts(prev);
+      const to = finalParts(item);
+      if (from.join('/') !== to.join('/') && (await disk.sizeOf(from)) === Number(item.size) && (await disk.sizeOf(to)) === null) {
+        await disk.move(from, to);
+        item.movedFrom = from.join('/');
       }
     }
     // The archive on disk is the source of truth for "done". Some older MMF
     // files (loose STLs) have no size in the API; then any non-empty file the
-    // bridge filed counts (it was verified when it was filed).
-    const onDisk = await sizeOf(finalPath(archiveRoot, item));
-    // A file the bridge verified and filed counts at the size it was filed at,
+    // downloader filed counts (it was verified when it was filed).
+    const onDisk = await disk.sizeOf(finalParts(item));
+    // A file the downloader verified and filed counts at the size it was filed at,
     // even when MMF's listed size is wrong.
     const known = Number(item.size) > 0;
     const filedSize = prev?.status === STATUS.DONE ? (prev.doneBytes ?? (prev.note ? onDisk : null)) : null;
@@ -138,7 +146,7 @@ export async function mergeQueue(existing, planned, archiveRoot, now = Date.now(
     // X_Supports.zip + X_Unsupported.zip; tools/Combine-RescalePairs.ps1).
     const packed = onDisk > 0 && (matches || onDisk === filedSize)
       ? null
-      : await findPacked(path.join(archiveRoot, ...item.dest), item, Number(item.size) || prev?.doneBytes, entriesOf);
+      : await findPacked(item, Number(item.size) || prev?.doneBytes, (name) => entriesOf([...item.dest, name]));
     if (packed) {
       item.status = STATUS.DONE;
       item.error = null;

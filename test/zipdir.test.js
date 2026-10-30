@@ -1,10 +1,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import path from 'node:path';
-import os from 'node:os';
-import { mkdtemp, mkdir, writeFile, readFile, stat } from 'node:fs/promises';
-import { readZipEntries, packedName, findPacked, zipEntryCache } from '../src/zipdir.js';
-import { mergeQueue } from '../src/queue.js';
+import { readZipEntries as readCore, packedName, findPacked as findCore } from '../extension/core/zip.js';
+import { mergeQueue } from '../extension/core/queue.js';
+import { memoryDisk } from './engine-fakes.js';
+
+// In-memory "files" for the shared core (the extension reads real files the same way).
+const files = new Map();
+const writeFile = async (name, data) => { files.set(name, Buffer.from(data)); };
+const bytesReader = (b) => ({ size: b.byteLength, read: async (p, l) => b.subarray(p, p + l) });
+const readZipEntries = async (name) => readCore(bytesReader(files.get(name)));
+const findPacked = (dir, item, size) => findCore(item, size, async (n) => (files.has(`${dir}/${n}`) ? readZipEntries(`${dir}/${n}`) : null));
+const path = { join: (...p) => p.join('/') };
 
 // Minimal zip writer for tests. `claimed` overrides the size recorded in the
 // central directory (to fake members over 4 GB); zip64 forces ZIP64 records.
@@ -67,9 +73,10 @@ function makeZip(entries, { zip64 = false } = {}) {
   return Buffer.concat([...locals, cd, ...tailParts, e]);
 }
 
-const tmp = () => mkdtemp(path.join(os.tmpdir(), 'mmf-zip-'));
+let tmpN = 0;
+const tmp = async () => `tmp${++tmpN}`;
 
-test('zipdir: reads names and sizes, plain and ZIP64 (> 4 GB members)', async () => {
+test('zip: reads names and sizes, plain and ZIP64 (> 4 GB members)', async () => {
   const dir = await tmp();
   await writeFile(path.join(dir, 'a.zip'), makeZip([{ name: 'X_Supports.zip', data: Buffer.alloc(10) }, { name: 'Ünsupported.zip', data: Buffer.alloc(3) }]));
   assert.deepEqual([...await readZipEntries(path.join(dir, 'a.zip'))], [['X_Supports.zip', 10], ['Ünsupported.zip', 3]]);
@@ -79,7 +86,7 @@ test('zipdir: reads names and sizes, plain and ZIP64 (> 4 GB members)', async ()
   await assert.rejects(readZipEntries(path.join(dir, 'c.zip')), /Not a zip/);
 });
 
-test('zipdir: packed names follow the combiner rule', () => {
+test('zip: packed names follow the combiner rule', () => {
   assert.equal(packedName('Razoraptor_Supports.zip'), 'Razoraptor.zip');
   assert.equal(packedName('Pack X_01_Unsupported.zip'), 'Pack X_01.zip');
   assert.equal(packedName('Thing_Supported.ZIP'), 'Thing.zip');
@@ -87,24 +94,21 @@ test('zipdir: packed names follow the combiner rule', () => {
   assert.equal(packedName('book.pdf'), null);
 });
 
-test('zipdir: findPacked matches by name+size, or by size for the combined name', async () => {
+test('zip: findPacked matches by name+size, or by size for the combined name', async () => {
   const dir = await tmp();
   await writeFile(path.join(dir, 'Briar.zip'), makeZip([{ name: 'Briar_Supports.zip', claimed: 100 }, { name: 'Briar_Unsupported.zip', claimed: 200 }]));
-  const cache = zipEntryCache();
-  assert.equal(await findPacked(dir, { filename: 'Briar_Supports.zip' }, 100, cache), 'Briar.zip');
-  assert.equal(await findPacked(dir, { filename: 'Briar_Supports.zip' }, 101, cache), null); // size must match
-  assert.equal(await findPacked(dir, { filename: 'Briar.zip' }, 200, cache), 'Briar.zip'); // duplicate bare download
-  assert.equal(await findPacked(dir, { filename: 'Briar.zip' }, 999, cache), null);
-  assert.equal(await findPacked(dir, { filename: 'Briar_Supports.zip' }, null, cache), 'Briar.zip'); // size unknown: name
-  assert.equal(await findPacked(dir, { filename: 'Other_Supports.zip' }, 100, cache), null); // no combined zip
-  assert.equal(await findPacked(dir, { filename: 'Briarwood.zip' }, 100, cache), null);
+  assert.equal(await findPacked(dir, { filename: 'Briar_Supports.zip' }, 100), 'Briar.zip');
+  assert.equal(await findPacked(dir, { filename: 'Briar_Supports.zip' }, 101), null); // size must match
+  assert.equal(await findPacked(dir, { filename: 'Briar.zip' }, 200), 'Briar.zip'); // duplicate bare download
+  assert.equal(await findPacked(dir, { filename: 'Briar.zip' }, 999), null);
+  assert.equal(await findPacked(dir, { filename: 'Briar_Supports.zip' }, null), 'Briar.zip'); // size unknown: name
+  assert.equal(await findPacked(dir, { filename: 'Other_Supports.zip' }, 100), null); // no combined zip
+  assert.equal(await findPacked(dir, { filename: 'Briarwood.zip' }, 100), null);
 });
 
 test('queue: files folded into a combined zip stay done (no re-download)', async () => {
-  const root = await tmp();
-  const dir = path.join(root, 'Rescale', '2025-05');
-  await mkdir(dir, { recursive: true });
-  await writeFile(path.join(dir, 'Raptor.zip'), makeZip([{ name: 'Raptor_Supports.zip', claimed: 5_000_000_000 }, { name: 'Raptor_Unsupported.zip', claimed: 300 }], { zip64: true }));
+  const disk = memoryDisk();
+  disk.files.set('Rescale/2025-05/Raptor.zip', makeZip([{ name: 'Raptor_Supports.zip', claimed: 5_000_000_000 }, { name: 'Raptor_Unsupported.zip', claimed: 300 }], { zip64: true }));
   const base = { creator: 'Rescale', dest: ['Rescale', '2025-05'], objectFileCount: 2 };
   const planned = [
     { ...base, key: '1:1', objectId: 1, fileId: 1, filename: 'Raptor_Supports.zip', size: 5_000_000_000 },
@@ -113,7 +117,7 @@ test('queue: files folded into a combined zip stay done (no re-download)', async
     { ...base, key: '3:1', objectId: 3, fileId: 1, filename: 'Gone_Supports.zip', size: 50 },
   ];
   const existing = { items: planned.map((p) => ({ ...p, status: 'done', doneBytes: p.size })) };
-  const q = await mergeQueue(existing, planned, root);
+  const q = await mergeQueue(existing, planned, disk);
   const by = Object.fromEntries(q.items.map((i) => [i.key, i]));
   assert.equal(by['1:1'].status, 'done');
   assert.equal(by['1:1'].packedIn, 'Raptor.zip');

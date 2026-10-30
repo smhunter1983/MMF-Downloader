@@ -1,181 +1,38 @@
-// MMF Downloader extension: asks the local bridge for one file at a time,
-// downloads it with Chrome (your real, logged-in browser session), and reports
-// back so the bridge can verify and file it.
-//
-// MV3 service workers sleep when idle, so all state lives in chrome.storage
-// and work is driven by events: download changes, alarms, and popup clicks.
+// MMF Downloader 2.0 background script: opens the dashboard and keeps the
+// hidden engine page (engine.html) running. All the work happens there.
 
-const BRIDGE = 'http://127.0.0.1:8766';
-const WATCHDOG = 'mmf-watchdog';
-const RESUME = 'mmf-resume';
+const ENGINE_URL = 'engine.html';
 
-const getState = async () => (await chrome.storage.local.get({
-  running: false,
-  inflight: null,       // { key, downloadId, label }
-  message: 'Idle',
-  bridgeOk: null,
-}));
-const setState = (patch) => chrome.storage.local.set(patch);
-
-async function bridge(pathname, body) {
-  const res = await fetch(`${BRIDGE}${pathname}`, {
-    method: body === undefined ? 'GET' : 'POST',
-    headers: { 'X-MMF-Bridge': '1', 'Content-Type': 'application/json' },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `Bridge HTTP ${res.status}`);
-  return data;
-}
-
-// Reads your library list and release names from MMF using your logged-in
-// Chrome session (read-only), and hands them to the bridge.
-const MMF = 'https://www.myminifactory.com';
-
-async function mmfJson(pathname) {
-  const res = await fetch(`${MMF}${pathname}`, { credentials: 'include', headers: { Accept: 'application/json' } });
-  const text = await res.text();
-  if (!res.ok || text.trimStart().startsWith('<')) {
-    throw new Error(`MMF returned a web page for ${pathname} (logged out or a Cloudflare check). Open myminifactory.com, log in, and try again.`);
-  }
-  return JSON.parse(text);
-}
-
-async function syncLibrary() {
-  await setState({ message: 'Syncing library list from MMF...' });
-  const objectPreviews = await mmfJson('/api/data-library/objectPreviews');
-  const creators = await mmfJson('/api/data-library/userGroups_metadata');
-  const releases = {};
-  for (const [i, c] of creators.entries()) {
-    await setState({ message: `Syncing release names (${i + 1}/${creators.length}): ${c.name}` });
-    for (const r of await mmfJson(`/api/data-library/userGroup_releases_metadata/${encodeURIComponent(c.id)}`)) {
-      releases[r.id] = { label: r.label, createdAt: r.createdAt, creator: c.name };
-    }
-    await new Promise((r) => setTimeout(r, 400));
-  }
-  const r = await bridge('/library', { objectPreviews, releases });
-  if (r.ok === false) throw new Error(r.error);
-  const synced = `Library synced: ${r.objects.toLocaleString()} models.`;
-  await setState({ message: `${synced} Updating the download list...` });
-
-  // Then build the download list (what "node mmf.js plan" does). New models
-  // need one API call each, so a new bundle takes a minute or so.
-  const p = await bridge('/plan', {});
-  if (p.ok === false) throw new Error(p.error);
-  const deadline = Date.now() + 3 * 60 * 60 * 1000;
-  let st;
-  do {
-    await new Promise((res) => setTimeout(res, 2000));
-    st = await bridge('/status');
-  } while (st.planning && Date.now() < deadline);
-  const lp = st.lastPlan;
-  if (!lp || st.planning) {
-    await setState({ message: `${synced} Still updating the download list; it carries on in the bridge window.` });
-  } else if (!lp.ok) {
-    await setState({ message: `${synced} Updating the download list failed: ${lp.error}` });
-  } else {
-    const parts = [lp.pending ? `${lp.pending.toLocaleString()} file${lp.pending === 1 ? '' : 's'} ready to download (new models are checked)` : 'Nothing new to download'];
-    if (lp.errors) parts.push(`${lp.errors} model${lp.errors === 1 ? '' : 's'} couldn't be read this time (sync again later)`);
-    await setState({ message: `${synced} ${parts.join('. ')}.` });
-  }
-  return r;
-}
-
-let pumping = false;
-
-// Starts the next download if we're running and nothing is in flight.
-async function pump() {
-  if (pumping) return;
-  pumping = true;
+async function ensureEngine() {
+  if (await chrome.offscreen.hasDocument()) return;
   try {
-    const s = await getState();
-    if (!s.running || s.inflight) return;
-
-    let r;
-    try {
-      r = await bridge('/next', {});
-      await setState({ bridgeOk: true });
-    } catch (err) {
-      await setState({ bridgeOk: false, message: 'Bridge not reachable. Is "node mmf.js serve" running? Retrying every minute.' });
-      return;
-    }
-
-    if (r.action === 'download') {
-      try {
-        const downloadId = await chrome.downloads.download({
-          url: r.item.url,
-          filename: r.item.filename,
-          conflictAction: 'uniquify',
-          saveAs: false,
-        });
-        await setState({ resumeAt: null, inflight: { key: r.item.key, downloadId, label: r.item.label }, message: `Downloading ${r.item.label}` });
-      } catch (err) {
-        await bridge('/report', { key: r.item.key, ok: false, error: `START_FAILED: ${err.message}` }).catch(() => {});
-        await setState({ message: `Could not start download: ${err.message}` });
-        chrome.alarms.create(RESUME, { when: Date.now() + 5000 });
-      }
-    } else if (r.action === 'wait') {
-      const resumeAt = Date.now() + r.ms;
-      chrome.alarms.create(RESUME, { when: resumeAt });
-      await setState({ resumeAt, message: `${r.reason}. Next download at ${new Date(resumeAt).toLocaleTimeString()}.` });
-    } else if (r.action === 'paused') {
-      await setState({ running: false, message: `Paused: ${r.reason}` });
-    } else if (r.action === 'done') {
-      await setState({ running: false, message: 'All done! Nothing left in the queue.' });
-    }
-  } finally {
-    pumping = false;
+    await chrome.offscreen.createDocument({
+      url: ENGINE_URL,
+      reasons: ['BLOBS'],
+      justification: 'Downloads your MyMiniFactory library into the folder you picked',
+    });
+  } catch (e) {
+    if (!/single offscreen document/i.test(e.message)) throw e; // created meanwhile
   }
 }
 
-async function finish(downloadId, ok, error) {
-  const s = await getState();
-  if (!s.inflight || s.inflight.downloadId !== downloadId) return;
-  let path = null;
-  if (ok) {
-    const [item] = await chrome.downloads.search({ id: downloadId });
-    path = item?.filename ?? null;
-  }
-  try {
-    const r = await bridge('/report', { key: s.inflight.key, ok, path, error });
-    await setState({ inflight: null, message: r.paused ? 'Paused by bridge (see popup)' : `Finished ${s.inflight.label}` });
-  } catch (err) {
-    // Keep inflight so the watchdog retries the report once the bridge is back.
-    await setState({ bridgeOk: false, message: `Could not report to bridge: ${err.message}` });
-    return;
-  }
-  // Keep Chrome's download list tidy; the file itself stays where the bridge put it.
-  chrome.downloads.erase({ id: downloadId }).catch(() => {});
-  pump();
-}
+// A run that was going when Chrome closed carries on (the engine decides).
+chrome.runtime.onStartup.addListener(() => { ensureEngine(); });
+chrome.runtime.onInstalled.addListener(() => { ensureEngine(); });
 
-chrome.downloads.onChanged.addListener((delta) => {
-  if (delta.state?.current === 'complete') finish(delta.id, true);
-  else if (delta.state?.current === 'interrupted') finish(delta.id, false, delta.error?.current ?? 'INTERRUPTED');
+chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
+  if (msg?.to !== 'background') return false;
+  if (msg.cmd === 'ensureEngine') {
+    ensureEngine().then(() => reply({ ok: true }), (e) => reply({ ok: false, error: e.message }));
+    return true;
+  }
+  return false;
 });
 
-// Watchdog: catches downloads that ended while the worker slept, retries a
-// failed report, and keeps the loop moving.
-async function watchdog() {
-  const s = await getState();
-  if (s.inflight) {
-    const [item] = await chrome.downloads.search({ id: s.inflight.downloadId });
-    if (!item) await finish(s.inflight.downloadId, false, 'DOWNLOAD_MISSING');
-    else if (item.state === 'complete') await finish(item.id, true);
-    else if (item.state === 'interrupted') await finish(item.id, false, item.error ?? 'INTERRUPTED');
-    return;
-  }
-  pump();
-}
+// Toolbar button: open the dashboard as its own window, at its last size.
+const DEFAULT_SIZE = { width: 1060, height: 900 };
+const clamp = (n, lo, hi, d) => (Number.isFinite(n) ? Math.min(hi, Math.max(lo, Math.round(n))) : d);
 
-chrome.alarms.onAlarm.addListener((a) => {
-  if (a.name === WATCHDOG) watchdog();
-  if (a.name === RESUME) pump();
-});
-
-const ensureWatchdog = () => chrome.alarms.create(WATCHDOG, { periodInMinutes: 1 });
-
-// Toolbar click opens the dashboard as its own floating window (or focuses it).
 chrome.action.onClicked.addListener(async () => {
   const { dashboardWindowId } = await chrome.storage.session.get('dashboardWindowId');
   if (dashboardWindowId) {
@@ -184,53 +41,16 @@ chrome.action.onClicked.addListener(async () => {
       return;
     } catch { /* window was closed */ }
   }
-  const { width, height } = await dashboardSize();
-  const win = await chrome.windows.create({ url: 'dashboard.html', type: 'popup', width, height, focused: true });
+  const { dashboardSize: s } = await chrome.storage.local.get('dashboardSize');
+  const win = await chrome.windows.create({
+    url: 'dashboard.html', type: 'popup', focused: true,
+    width: clamp(s?.width, 480, 4000, DEFAULT_SIZE.width), height: clamp(s?.height, 400, 3000, DEFAULT_SIZE.height),
+  });
   await chrome.storage.session.set({ dashboardWindowId: win.id });
 });
-
-// The dashboard reopens at whatever size it was last left at.
-const DEFAULT_SIZE = { width: 1060, height: 900 };
-const MIN_SIZE = { width: 480, height: 400 };
-const MAX_SIZE = { width: 4000, height: 3000 };
-const clamp = (n, lo, hi, fallback) => (Number.isFinite(n) ? Math.min(hi, Math.max(lo, Math.round(n))) : fallback);
-
-async function dashboardSize() {
-  const { dashboardSize: s } = await chrome.storage.local.get('dashboardSize');
-  return {
-    width: clamp(s?.width, MIN_SIZE.width, MAX_SIZE.width, DEFAULT_SIZE.width),
-    height: clamp(s?.height, MIN_SIZE.height, MAX_SIZE.height, DEFAULT_SIZE.height),
-  };
-}
 
 chrome.windows.onBoundsChanged?.addListener(async (win) => {
   const { dashboardWindowId } = await chrome.storage.session.get('dashboardWindowId');
   if (win.id !== dashboardWindowId || win.state !== 'normal') return;
   await chrome.storage.local.set({ dashboardSize: { width: win.width, height: win.height } });
 });
-chrome.runtime.onInstalled.addListener(ensureWatchdog);
-chrome.runtime.onStartup.addListener(ensureWatchdog);
-
-chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
-  (async () => {
-    if (msg.cmd === 'start') {
-      await bridge('/resume', {}).catch(() => {});
-      await setState({ running: true, message: 'Starting...' });
-      ensureWatchdog();
-      await pump();
-    } else if (msg.cmd === 'pause') {
-      await setState({ running: false, message: 'Paused. The current file (if any) will finish.' });
-    } else if (msg.cmd === 'retryFailed') {
-      await bridge('/retry-failed', {});
-    } else if (msg.cmd === 'syncLibrary') {
-      try {
-        await syncLibrary();
-      } catch (err) {
-        await setState({ message: `Sync failed: ${err.message}` });
-      }
-    }
-    reply({ ok: true });
-  })().catch((err) => reply({ ok: false, error: err.message }));
-  return true;
-});
-
