@@ -92,27 +92,6 @@ with the bundle.
 - Loose parts replaced by a whole-model zip are moved to `_to_delete`, never
   deleted.
 
-## Combining Rescale's Supported/Unsupported pairs (optional, Windows)
-
-Rescale Miniatures ships each creature as `X_Supports.zip` + `X_Unsupported.zip`.
-`tools\Combine-RescalePairs.ps1` folds each pair into one `X.zip` holding both
-zips unchanged (store mode, no recompression). Needs [7-Zip](https://www.7-zip.org/)
-and PowerShell 7 (`pwsh`).
-
-```
-$r = "Z:\your\archive\Rescale Miniatures"
-pwsh -File tools\Combine-RescalePairs.ps1 -Root $r              # dry run: shows the plan
-pwsh -File tools\Combine-RescalePairs.ps1 -Root $r -Execute     # do it
-```
-
-- Dry run by default. Each new zip is built as `.partial`, tested with `7z t`,
-  and checked entry by entry against the originals before it gets its name.
-- Originals are moved to `_combined_originals` in each release folder for you
-  to delete when happy (or add `-DeleteOriginals`).
-- Folders with files changed in the last hour are left alone.
-- The extension understands combined zips: files inside them count as
-  downloaded, so they are never fetched again.
-
 ## Troubleshooting
 
 | Symptom | Fix |
