@@ -313,7 +313,7 @@ async function revealPdf(parts) {
   await navigator.clipboard.writeText(full).catch(() => {});
   showNotice(typed
     ? `Copied: ${full}. Paste it into your file browser to go there. (Chrome extensions can't open folders themselves.)`
-    : `Copied: ${full}. Tip: put the PDF folder's full path in ⚙ and copied locations can be pasted straight into your file browser.`, false, 12000);
+    : `Copied: ${full}. Tip: paste the PDF folder's path in ⚙ (Path for PDFs discovered) and copied locations can be pasted straight into your file browser.`, false, 12000);
 }
 
 // An extension can't open a file browser, so: copy where it is (inside your folder).
@@ -325,7 +325,7 @@ async function reveal(where) {
   await navigator.clipboard.writeText(rel).catch(() => {});
   showNotice(base
     ? `Copied: ${rel}${r.packed ? '  (inside this combined zip)' : ''}. Paste it into your file browser to go there. (Chrome extensions can't open folders themselves.)`
-    : `Copied: ${rel}${r.packed ? '  (inside this combined zip)' : ''}. Tip: put your folder's full path in ⚙ and copied locations can be pasted straight into your file browser.`, false, 12000);
+    : `Copied: ${rel}${r.packed ? '  (inside this combined zip)' : ''}. Tip: paste your archive folder's path in ⚙ (Path of archive folder) and copied locations can be pasted straight into your file browser.`, false, 12000);
 }
 
 function makeRow({ level, key, label, objs, expandable, where }) {

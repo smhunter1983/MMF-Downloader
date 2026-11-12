@@ -564,7 +564,7 @@ export function createEngine({
     const { rows, releases } = await fetchLibrary(progress);
     await store.set('releases', releases);
     const entries = buildEntries(rows);
-    // Every creator in the library (for the "skip these creators" checklist).
+    // Every creator in the library (for the "Skip creators" checklist).
     const counts = {};
     for (const e of entries) counts[e.creator] = (counts[e.creator] ?? 0) + 1;
     await store.set('creators', counts);
@@ -635,7 +635,7 @@ export function createEngine({
   }
 
   // Where a model, release or creator lives under the archive folder, for
-  // "copy location" (an extension can't open Explorer).
+  // "copy location" (an extension can't open a file browser).
   function locate({ objectId, creator, bundle }) {
     if (objectId != null) {
       const done = queue.items.filter((i) => Number(i.objectId) === Number(objectId) && i.status === STATUS.DONE);

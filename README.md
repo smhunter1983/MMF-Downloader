@@ -24,7 +24,10 @@ nothing else to install: no Node, no command line, no MMF developer account.
 1. **📁 Pick folder**: choose where your archive lives (or should live). Chrome
    asks to let the extension edit that folder: allow it. After a Chrome
    restart it asks once more; choose **"Allow on every visit"** and it stops
-   asking.
+   asking. Optionally, in **⚙**, paste that folder's full path too (see
+   Settings): Chrome never tells an extension where a folder is, and with the
+   path, clicking ✓ in the list copies a location you can paste straight into
+   your file browser.
 2. **Sync library**: reads your MMF library (purchases, Tribe months, creator
    releases, free downloads) and builds the download list. The first Sync
    visits every model's page (about 1.5 s each, so a large library takes a
@@ -32,7 +35,9 @@ nothing else to install: no Node, no command line, no MMF developer account.
    are recognised and marked done.
 3. Review the **Creator ▸ Release ▸ Model** list: everything is checked
    (Get); untick what you don't want (Skip). The filter box plus **Check
-   all / Uncheck all** work on what's shown.
+   all / Uncheck all** work on what's shown; **Expand all** opens every
+   creator. Don't keep busts or statues? Turn on **Skip busts** / **Skip
+   statues** in ⚙ before you Start.
 4. **Start**. You can close the dashboard; downloads carry on in the
    background as long as Chrome is open.
 
@@ -44,10 +49,14 @@ nothing else to install: no Node, no command line, no MMF developer account.
 - **Don't want** (shows when you point at a row) hides a model, a release or
   a whole creator: out of the list, the counts and New, and never downloaded.
   **Hidden (n)** lists them; **Restore** puts one back, badged NEW.
-- In the list, **✓** = already in your archive; **n/m** = partly downloaded.
-  Clicking either copies the file or folder location (Chrome extensions can't
-  open folders themselves; put your folder's full path in ⚙ and the copied
-  path can be pasted straight into your file browser).
+- In the list, **✓** = already in your archive; **n/m** = partly downloaded;
+  an **orange n/m** = complete except busts or statues you chose to skip
+  (hover it for details). Clicking any of them copies the file or folder
+  location (Chrome extensions can't open folders themselves; with your
+  folder's path set in ⚙, the copied location can be pasted straight into
+  your file browser).
+- **Retry failed** queues failed files again; **Clear failed** stops trying
+  them (they are unticked; tick the model again to get them later).
 - **History** shows what was downloaded, retried or failed, and when; filter
   it by creator, type or text.
 - If Chrome closes mid-run (restart, Windows Update), the run resumes by
@@ -59,9 +68,9 @@ nothing else to install: no Node, no command line, no MMF developer account.
 |---|---|---|
 | Downloads per hour | 120 | Pace of downloads. Above ~150/hour MMF has been reported to refuse downloads or flag accounts, so the dashboard warns you. |
 | If MMF refuses a download, retry after | 10 min (at least 5) | MMF occasionally refuses one download in a long run. The run waits this long and retries once by itself; if it's refused again, it pauses. |
-| Path of archive folder | (empty) | Optional; only used for copied locations. |
-| Path for PDFs discovered | (off) | Copy the folder's path in your file browser, click **Paste path** beside the box, and pick that same folder when Chrome asks (once, to confirm it); every PDF downloaded from then on is also copied to `<that folder>\<Creator>\` under the creator's file name. The archive keeps its copy. Nothing in the PDF folder is overwritten; a file you moved to `<Creator>\_Other` counts as already there. Optionally type the folder's full path in the box, so a 📄 row in History copies the PDF's full location. |
-| Skip busts | off | Bust files (the name says so, like `BUSTS.zip` or `Overlord Bust.zip`) are never downloaded, and a model counts as complete without them. In the list, a count shown in orange (for example 11/12) means everything is there except busts; hover it for the reason. Busts already downloaded are left alone. Turn it off and busts are ordinary files again. |
+| Path of archive folder | (empty) | Optional. Copy your archive folder's path in your file browser and click **Paste path**. Used only for copied locations. A ✓ beside it means it matches the folder you picked with 📁; ⚠ means it doesn't (a note below says why). |
+| Path for PDFs discovered | (off) | Optional. Copy a folder's path in your file browser and click **Paste path**, then click **Select and Confirm PDF Location** and pick that same folder in Chrome's window (once: Chrome only lets an extension save into a folder picked there). From then on every PDF you download is also copied to `<that folder>\<Creator>\` under the creator's file name; the archive keeps its copy. Nothing there is overwritten, and a file you moved to `<Creator>\_Other` counts as already there. 📄 rows in History copy the PDF's location. **Clear** stops the copying. |
+| Skip busts | off | Files or models with "bust" in the name (like `BUSTS.zip` or `Overlord Bust.zip`) are never downloaded, and a model counts as complete without them: its count shows in orange (for example 11/12). Busts already downloaded are left alone. Turn it off and busts are ordinary files again. |
 | Skip statues | off | The same as Skip busts, for files or models with "statue" in the name (like `Dragon Statue.zip`). Each has its own switch. |
 | Skip creators | none | A checklist of every creator in your library; ticked ones are left out (e.g. creators who moved off MMF). |
 
@@ -90,8 +99,9 @@ with the bundle.
   files, like clicking Download yourself, at a gentle pace.
 - Every file is checked before it's filed: exact size, zip structure
   (end-of-archive record), STL structure (triangle count / `endsolid`). A web
-  page instead of a file (logged out, Cloudflare check) pauses the run instead
-  of saving junk.
+  page instead of a file is never saved: a log-in page or Cloudflare check
+  pauses the run; the model's own page (MMF didn't accept that one link) fails
+  just that file and the run carries on.
 - Downloads are written as `<name>.partial` next to their final place and
   renamed only once checked. It never overwrites a different file already in
   your archive.
@@ -103,10 +113,20 @@ with the bundle.
 | Symptom | Fix |
 |---|---|
 | "Chrome needs your OK to use the archive folder again" | Click **Allow folder**, choose **Allow on every visit** |
-| "MMF returned a web page" / "Paused: Got a web page…" | Open myminifactory.com in Chrome, log in or pass the check, then **Sync** or **Start** again |
+| "Paused: MMF sent a web page instead of …" | The message says which page. A Cloudflare check: open myminifactory.com in Chrome and let it finish. A log-in page: log in. Then **Start** |
+| A file failed with "MMF did not accept this file's download link" | **Sync library**, then **Retry failed** |
 | "MMF refused a download… retrying by itself" | Nothing to do: it retries after the wait. If it's refused again it pauses; check you're logged in, then **Start** |
-| Some files failed | **Retry failed** |
+| Some files failed | **Retry failed**; or **Clear failed** to stop trying them |
+| A count is orange | Not a problem: the model is complete except busts or statues you chose to skip |
+| Something you don't want keeps showing up | Point at it and click **Don't want**; **Hidden (n)** → **Restore** brings it back |
 | Nothing happens after a Chrome update | `chrome://extensions` → reload MMF Downloader |
+
+## Upgrading from 2.0
+
+Download the new version, replace the files in your extension folder, then in
+`chrome://extensions` click the reload arrow on MMF Downloader. Press **Sync
+library** once: models with a PDF are read again so their PDFs download
+properly. Your settings, list and history are kept.
 
 ## Upgrading from 1.x
 
