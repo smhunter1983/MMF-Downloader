@@ -1,11 +1,12 @@
 {
   "manifest_version": 3,
   "name": "MMF Downloader",
-  "version": "2.0.0",
+  "version": "2.3.0",
   "description": "Archives your MyMiniFactory library into a folder you choose. Everything runs in Chrome: no other software needed.",
   "permissions": [
     "storage",
-    "offscreen"
+    "offscreen",
+    "clipboardRead"
   ],
   "host_permissions": [
     "https://www.myminifactory.com/*",

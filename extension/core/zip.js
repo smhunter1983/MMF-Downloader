@@ -35,6 +35,28 @@ export function looksLikeHtml(text) {
   return head.startsWith('<!doctype') || head.startsWith('<html') || head.includes('cloudflare');
 }
 
+/**
+ * What kind of web page arrived instead of a file, from its start and the
+ * address it finally came from:
+ *   check   a Cloudflare "Just a moment..." page
+ *   login   MMF's log-in page
+ *   model   a model's own page: MMF did not accept this one download link
+ *   unknown anything else
+ */
+export function describePage(text, finalUrl = '') {
+  const html = String(text);
+  const m = html.match(/<title[^>]*>([^<]*)/i);
+  const title = (m ? m[1] : '').replace(/&amp;/g, '&').replace(/&#0?39;|&apos;/g, "'").replace(/&quot;/g, '"')
+    .replace(/\s+/g, ' ').trim().slice(0, 80);
+  let path = '';
+  try { path = new URL(finalUrl).pathname; } catch { /* no address known */ }
+  let kind = 'unknown';
+  if (/just a moment|attention required|cloudflare|cf-challenge|challenge-platform/i.test(`${title} ${html.slice(0, 5000)}`)) kind = 'check';
+  else if (/^\/(login|register|oauth)\b/i.test(path) || /^(log ?in|sign ?in)\b/i.test(title)) kind = 'login';
+  else if (/^\/object\//i.test(path)) kind = 'model';
+  return { title, kind };
+}
+
 function findEocd(tail) {
   const dv = view(tail);
   for (let i = tail.byteLength - EOCD_MIN; i >= 0; i--) if (dv.getUint32(i, true) === EOCD_SIG) return i;

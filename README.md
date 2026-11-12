@@ -41,10 +41,13 @@ nothing else to install: no Node, no command line, no MMF developer account.
 - **Sync library** whenever creators release something. Models it hasn't
   seen before get a **NEW** badge (until downloaded), and **New (n)** shows
   only those.
+- **Don't want** (shows when you point at a row) hides a model, a release or
+  a whole creator: out of the list, the counts and New, and never downloaded.
+  **Hidden (n)** lists them; **Restore** puts one back, badged NEW.
 - In the list, **✓** = already in your archive; **n/m** = partly downloaded.
   Clicking either copies the file or folder location (Chrome extensions can't
-  open Explorer themselves; put your folder's full path in ⚙ and the copied
-  path opens straight from Explorer's address bar).
+  open folders themselves; put your folder's full path in ⚙ and the copied
+  path can be pasted straight into your file browser).
 - **History** shows what was downloaded, retried or failed, and when; filter
   it by creator, type or text.
 - If Chrome closes mid-run (restart, Windows Update), the run resumes by
@@ -56,8 +59,11 @@ nothing else to install: no Node, no command line, no MMF developer account.
 |---|---|---|
 | Downloads per hour | 120 | Pace of downloads. Above ~150/hour MMF has been reported to refuse downloads or flag accounts, so the dashboard warns you. |
 | If MMF refuses a download, retry after | 10 min (at least 5) | MMF occasionally refuses one download in a long run. The run waits this long and retries once by itself; if it's refused again, it pauses. |
-| Full path of the archive folder | (empty) | Only used for copied locations. |
-| Skip these creators | none | A checklist of every creator in your library; ticked ones are left out (e.g. creators who moved off MMF). |
+| Path of archive folder | (empty) | Optional; only used for copied locations. |
+| Path for PDFs discovered | (off) | Copy the folder's path in your file browser, click **Paste path** beside the box, and pick that same folder when Chrome asks (once, to confirm it); every PDF downloaded from then on is also copied to `<that folder>\<Creator>\` under the creator's file name. The archive keeps its copy. Nothing in the PDF folder is overwritten; a file you moved to `<Creator>\_Other` counts as already there. Optionally type the folder's full path in the box, so a 📄 row in History copies the PDF's full location. |
+| Skip busts | off | Bust files (the name says so, like `BUSTS.zip` or `Overlord Bust.zip`) are never downloaded, and a model counts as complete without them. In the list, a count shown in orange (for example 11/12) means everything is there except busts; hover it for the reason. Busts already downloaded are left alone. Turn it off and busts are ordinary files again. |
+| Skip statues | off | The same as Skip busts, for files or models with "statue" in the name (like `Dragon Statue.zip`). Each has its own switch. |
+| Skip creators | none | A checklist of every creator in your library; ticked ones are left out (e.g. creators who moved off MMF). |
 
 Settings save as you change them.
 

@@ -13,11 +13,12 @@
 
 import {
   STATUS, MAX_ATTEMPTS, buildTree, setSkip, finalParts, mergeQueue, startBatch, joinBatch,
-  batchSummary, finishBatchIfDone, upcoming, summarize, newestSeen,
+  batchSummary, finishBatchIfDone, upcoming, summarize, newestSeen, applySkipRules, setHidden, hiddenModels,
 } from '../core/queue.js';
 import { buildEntries, applyExclusions, deriveGroupTitles, destinationFor } from '../core/library.js';
-import { itemsForObject, dedupeItems, resolveNameClashes, parseArchivesFromPage, MMF_SITE } from '../core/items.js';
-import { verifyBytes, looksLikeHtml } from '../core/zip.js';
+import { itemsForObject, dedupeItems, resolveNameClashes, parseArchivesFromPage, isStaleObject, MMF_SITE } from '../core/items.js';
+import { verifyBytes, looksLikeHtml, describePage } from '../core/zip.js';
+import { safeName } from '../core/names.js';
 
 export const DEFAULT_SETTINGS = Object.freeze({
   maxDownloadsPerHour: 120,
@@ -26,11 +27,21 @@ export const DEFAULT_SETTINGS = Object.freeze({
   excludeCreators: [],
   bundleTitles: {},
   archivePath: '', // optional, only for "copy location" (Chrome doesn't reveal folder paths)
+  pdfPath: '', // the same, for the PDF folder
+  skipBusts: false, // leave bust files out: never downloaded, never counted as missing
+  skipStatues: false, // the same for statues
 });
 
 const HOUR_MS = 60 * 60 * 1000;
 const WRITE_BATCH = 16 * 1024 * 1024;
 const RETRY_FAILED_MS = 5000;
+const PDF_OTHER = '_Other'; // where you park previews, maps and guides by hand
+const PAGE_PEEK = 64 * 1024; // enough of a stray web page to find its <title>
+const PAGE_ADVICE = {
+  check: 'That is a Cloudflare check. Open myminifactory.com in Chrome, let the check finish, then press Start.',
+  login: 'MMF wants you to log in. Log in to myminifactory.com in Chrome, then press Start.',
+  unknown: 'Open myminifactory.com in Chrome, make sure you are logged in and can download a file by hand, then press Start.',
+};
 
 export class NeedsFolderError extends Error {}
 
@@ -45,7 +56,7 @@ const withExt = (name, ext) => name.slice(0, name.length - extOf(name).length) +
 const label = (i) => `${i.creator} / ${i.objectName} / ${i.filename}`;
 
 export function createEngine({
-  store, getDisk, fetchImpl = (...a) => fetch(...a), now = () => Date.now(),
+  store, getDisk, getPdfDisk = async () => null, fetchImpl = (...a) => fetch(...a), now = () => Date.now(),
   sleep = (ms) => new Promise((r) => setTimeout(r, ms)), log = () => {}, onChange = () => {},
 }) {
   let queue = { items: [] };
@@ -68,9 +79,12 @@ export function createEngine({
     settings = { ...DEFAULT_SETTINGS, ...((await store.get('settings')) ?? {}) };
     starts = ((await store.get('starts')) ?? []).filter((t) => t > now() - HOUR_MS);
     for (const i of queue.items) if (i.status === STATUS.ACTIVE) i.status = STATUS.PENDING;
+    applySkipRules(queue, skipRules());
     // A run that was going when Chrome closed (restart, Windows Update) resumes.
     return { resume: (await store.get('wasRunning')) === true };
   }
+
+  const skipRules = () => ({ busts: settings.skipBusts === true, statues: settings.skipStatues === true });
 
   // ---------- status ----------
 
@@ -91,6 +105,10 @@ export function createEngine({
       planning: state.planning,
       lastPlan: state.lastPlan,
       summary: summarize(queue),
+      pdfCopiesWaiting: queue.items.filter((i) => i.pdfCopy === 'wanted').length,
+      hiddenModels: hiddenModels(queue),
+      bustsOut: queue.items.filter((i) => i.ruleOut === 'bust').length,
+      statuesOut: queue.items.filter((i) => i.ruleOut === 'statue').length,
       batch: batchSummary(queue),
       lastBatch: queue.lastBatch ?? null,
       upcoming: upcoming(queue),
@@ -118,6 +136,7 @@ export function createEngine({
         failed: e.failed ?? null,
         reason: e.reason ?? e.note ?? null,
         until: e.until ?? null,
+        at: e.at ?? null, // where a PDF sits in the PDF folder
       };
     });
   }
@@ -129,6 +148,7 @@ export function createEngine({
   async function start() {
     if (state.planning) return busyPlanning();
     await getDisk(); // throws NeedsFolderError if the folder isn't usable
+    await copyWaitingPdfs();
     state.paused = false;
     state.pauseReason = null;
     state.hold = null;
@@ -166,6 +186,14 @@ export function createEngine({
     return { ok: true, changed: changedCount, summary: summarize(queue) };
   }
 
+  async function setHiddenFor(objectIds, hidden) {
+    if (state.planning) return busyPlanning();
+    const changedCount = setHidden(queue, objectIds, hidden, now());
+    if (changedCount) await saveQueue();
+    changed();
+    return { ok: true, changed: changedCount, hiddenModels: hiddenModels(queue) };
+  }
+
   async function retryFailed() {
     if (state.planning) return busyPlanning();
     let n = 0;
@@ -177,12 +205,32 @@ export function createEngine({
     return { ok: true, retried: n };
   }
 
+  // Give up on the failed files for now: they are set to Skip, so nothing retries them and the
+  // failed count goes back to zero. Ticking the model again brings them back. History keeps the record.
+  async function clearFailed() {
+    if (state.planning) return busyPlanning();
+    let n = 0;
+    for (const i of queue.items) {
+      if (i.status === STATUS.FAILED) { i.status = STATUS.PENDING; i.attempts = 0; i.error = null; i.skip = true; n++; }
+    }
+    if (n) await saveQueue();
+    changed();
+    return { ok: true, cleared: n };
+  }
+
   async function saveSettings(patch) {
+    const rulesWere = JSON.stringify(skipRules());
     settings = { ...settings, ...patch };
     // Retrying a refusal sooner than 5 minutes just gets refused again.
     settings.forbiddenRetryMinutes = Math.max(5, Math.min(120, Number(settings.forbiddenRetryMinutes) || 10));
     settings.maxDownloadsPerHour = Math.max(1, Math.min(1000, Math.round(Number(settings.maxDownloadsPerHour) || 120)));
+    settings.skipBusts = settings.skipBusts === true;
+    settings.skipStatues = settings.skipStatues === true;
     await store.set('settings', settings);
+    if (JSON.stringify(skipRules()) !== rulesWere && !state.planning) {
+      applySkipRules(queue, skipRules());
+      await saveQueue();
+    }
     changed();
     return { ok: true, settings };
   }
@@ -203,7 +251,7 @@ export function createEngine({
         if (ms > 0) { await wait(ms, `${state.hold.reason}; retrying automatically`); continue; }
         state.hold = null;
       }
-      const item = queue.items.find((i) => i.status === STATUS.PENDING && !i.skip);
+      const item = queue.items.find((i) => i.status === STATUS.PENDING && !i.skip && !i.ruleOut && !i.hidden);
       if (!item) {
         const b = batchSummary(queue);
         if (finishBatchIfDone(queue, now()) && b?.total) {
@@ -331,10 +379,20 @@ export function createEngine({
       if (asStl.ok) { v = asStl; filename = withExt(item.filename, '.stl'); }
     }
     if (!v.ok) {
+      // Before the stray page is removed, read what it was: the reason names
+      // the file, the HTTP status and the page's title.
+      const page = v.html ? describePage(new TextDecoder().decode(await reader.read(0, Math.min(reader.size, PAGE_PEEK))), res.url) : null;
       await disk.remove(partial);
-      if (v.html) {
-        await fail(item, v.reason, { countAttempt: false });
-        pause(`${v.reason} Open myminifactory.com in Chrome, clear any check, then press Start.`);
+      if (page) {
+        const what = `MMF sent a web page instead of "${item.filename}" (HTTP ${res.status}${page.title ? `, page "${page.title}"` : ''})`;
+        if (page.kind === 'model') {
+          // Logged in and no check: MMF just didn't accept this file's link.
+          // One file's problem, so the rest of the run carries on.
+          await fail(item, `${what}. That is the model's own page: MMF did not accept this file's download link. Sync library, then press Retry failed.`, { final: true });
+          return;
+        }
+        await fail(item, what, { countAttempt: false });
+        pause(`${what}. ${PAGE_ADVICE[page.kind]}`);
         return;
       }
       await fail(item, v.reason);
@@ -363,6 +421,84 @@ export function createEngine({
     await saveQueue();
     await history({ type: 'done', key: item.key, bytes: v.bytes, dest: dest.join('/'), ...(v.note ? { note: v.note } : {}) });
     log(`ok ${bytes} bytes -> ${dest.join('/')}`);
+    if (/\.pdf$/i.test(filename)) await copyPdf(item, disk);
+  }
+
+  // ---------- PDF folder ----------
+  // With a PDF folder picked (⚙), every PDF downloaded from then on is also
+  // copied to <PDF folder>/<Creator>/<the creator's file name>. The archive
+  // copy stays where it is. Nothing in the PDF folder is ever overwritten, and
+  // a file you moved to <Creator>/_Other counts as already there.
+
+  // { disk } when a folder is picked and usable, { blocked } when Chrome needs
+  // your OK again, {} when no PDF folder is picked.
+  async function pdfFolder() {
+    try {
+      const disk = await getPdfDisk();
+      return disk ? { disk } : {};
+    } catch (e) {
+      return { blocked: e.message };
+    }
+  }
+
+  async function copyPdf(item, disk) {
+    const to = await pdfFolder();
+    if (!to.disk && !to.blocked) return; // no PDF folder: nothing to do, now or later
+    item.pdfCopy = 'wanted';
+    if (to.disk) await copyPdfTo(item, disk, to.disk);
+    await saveQueue();
+  }
+
+  // PDFs downloaded while the PDF folder couldn't be used are copied when a run starts.
+  async function copyWaitingPdfs() {
+    const waiting = queue.items.filter((i) => i.pdfCopy === 'wanted' && i.status === STATUS.DONE);
+    if (!waiting.length) return;
+    const to = await pdfFolder();
+    if (!to.disk) return;
+    let disk;
+    try { disk = await getDisk(); } catch { return; }
+    for (const item of waiting) await copyPdfTo(item, disk, to.disk);
+    await saveQueue();
+  }
+
+  async function copyPdfTo(item, disk, pdfDisk) {
+    const name = safeName(item.originalFilename ?? item.filename, 180);
+    const target = [safeName(item.creator), name];
+    const shown = target.join('/');
+    const settle = async (outcome, reason, at = null) => {
+      item.pdfCopy = outcome;
+      await history({ type: 'pdf', key: item.key, reason, ...(at ? { at } : {}) });
+    };
+    const partial = [target[0], `${name}.partial`];
+    try {
+      const from = [...item.dest, item.filename];
+      if ((await disk.sizeOf(from)) === null) return await settle('missing', 'Not copied to the PDF folder: the file is no longer in the archive');
+      const reader = await disk.reader(from);
+      const head = await reader.read(0, Math.min(reader.size, 5));
+      if (String.fromCharCode(...head) !== '%PDF-') return await settle('not-pdf', 'Not copied to the PDF folder: the file is not a PDF inside');
+      for (const place of [target, [target[0], PDF_OTHER, name]]) {
+        if ((await pdfDisk.sizeOf(place)) === reader.size) return await settle('there', `Already in the PDF folder: ${place.join('/')}`, place);
+      }
+      if ((await pdfDisk.sizeOf(target)) !== null) {
+        return await settle('clash', `Not copied: a different file is already at ${shown} in the PDF folder; left it alone`);
+      }
+      const w = await pdfDisk.writer(partial);
+      try {
+        for (let at = 0; at < reader.size; at += WRITE_BATCH) await w.write(await reader.read(at, Math.min(WRITE_BATCH, reader.size - at)));
+        await w.close();
+      } catch (e) {
+        await w.abort?.().catch(() => {});
+        throw e;
+      }
+      if ((await pdfDisk.sizeOf(partial)) !== reader.size) throw new Error('the copy came out a different size');
+      await pdfDisk.move(partial, target);
+      await settle('copied', `Copied to the PDF folder: ${shown}`, target);
+    } catch (e) {
+      // Still 'wanted': tried again when the next run starts.
+      await pdfDisk.remove(partial).catch(() => {});
+      log(`pdf copy failed for ${shown}: ${e.message}`);
+      await history({ type: 'pdf', key: item.key, reason: `Couldn't copy to the PDF folder yet (${e.message}); will try again at the next Start` });
+    }
   }
 
   // Loose parts replaced by a whole-model download go to _to_delete (never deleted).
@@ -407,7 +543,7 @@ export function createEngine({
   // A model's file list, from cache or its MMF page.
   async function objectFiles(id) {
     const cached = await store.getObject(id);
-    if (cached) return { obj: cached, fetched: false };
+    if (cached && !isStaleObject(cached)) return { obj: cached, fetched: false };
     await sleep(settings.pageDelayMs);
     const res = await fetchImpl(`${MMF_SITE}/object/3d-print-${encodeURIComponent(id)}`, { credentials: 'include' });
     if (res.status === 404) { await res.body?.cancel().catch(() => {}); return { notFound: true }; }
@@ -465,6 +601,7 @@ export function createEngine({
     resolveNameClashes(deduped.items);
     progress('Checking your archive folder for files already there...');
     queue = await mergeQueue(queue.items.length ? queue : null, deduped.items, disk, now());
+    applySkipRules(queue, skipRules());
     await saveQueue();
     await store.set('unavailable', unavailable);
     const s = summarize(queue);
@@ -527,8 +664,8 @@ export function createEngine({
   }
 
   return {
-    init, status, locate, creators, tree: () => buildTree(queue), newSince: () => newestSeen(queue), history: readHistory,
-    start, pause: () => pause(), setSkip: setSkipFor, retryFailed, sync, saveSettings,
+    init, status, locate, creators, tree: (opts) => buildTree(queue, opts), newSince: () => newestSeen(queue), history: readHistory,
+    start, pause: () => pause(), setSkip: setSkipFor, setHidden: setHiddenFor, retryFailed, clearFailed, sync, saveSettings,
     get queue() { return queue; },
     whenIdle: () => loop ?? Promise.resolve(),
   };

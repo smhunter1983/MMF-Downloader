@@ -24,10 +24,30 @@ async function getDisk() {
   return disk;
 }
 
+// The optional PDF folder (⚙): null when none is picked.
+let pdfDisk = null;
+let pdfDiskFor = null;
+
+async function pdfFolderInfo() {
+  const handle = await store.get('pdfDir');
+  if (!handle) return { picked: false };
+  return { picked: true, name: handle.name, permission: await handle.queryPermission({ mode: 'readwrite' }) };
+}
+
+async function getPdfDisk() {
+  const handle = await store.get('pdfDir');
+  if (!handle) return null;
+  const perm = await handle.queryPermission({ mode: 'readwrite' });
+  if (perm !== 'granted') throw new NeedsFolderError('Chrome needs your OK to use the PDF folder again: open the dashboard and click "Allow folder".');
+  if (!pdfDisk || !(await pdfDiskFor.isSameEntry(handle))) { pdfDisk = folderDisk(handle); pdfDiskFor = handle; }
+  return pdfDisk;
+}
+
 let notifyTimer = null;
 const engine = createEngine({
   store,
   getDisk,
+  getPdfDisk,
   log: (m) => console.log('[engine]', m),
   onChange: () => {
     // Tell open dashboards (at most a few times a second).
@@ -47,18 +67,20 @@ const ready = (async () => {
 })();
 
 const commands = {
-  status: async () => ({ ...engine.status(), folder: await folderInfo() }),
-  tree: () => ({ tree: engine.tree(), newSince: engine.newSince() }),
+  status: async () => ({ ...engine.status(), folder: await folderInfo(), pdfFolder: await pdfFolderInfo() }),
+  tree: (opts) => ({ tree: engine.tree({ hidden: opts?.hidden === true }), newSince: engine.newSince() }),
   history: async () => ({ events: await engine.history() }),
   start: () => engine.start(),
   pause: () => engine.pause(),
   setSkip: ({ objectIds, skip }) => engine.setSkip(objectIds, skip),
+  setHidden: ({ objectIds, hidden }) => engine.setHidden(objectIds, hidden),
   retryFailed: () => engine.retryFailed(),
+  clearFailed: () => engine.clearFailed(),
   sync: () => engine.sync(),
   saveSettings: (patch) => engine.saveSettings(patch),
   locate: (where) => engine.locate(where),
   creators: async () => ({ creators: await engine.creators() }),
-  folderChanged: () => { disk = null; diskFor = null; return { ok: true }; },
+  folderChanged: () => { disk = null; diskFor = null; pdfDisk = null; pdfDiskFor = null; return { ok: true }; },
 };
 
 chrome.runtime.onMessage.addListener((msg, _sender, reply) => {

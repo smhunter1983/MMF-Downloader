@@ -1,5 +1,53 @@
 # Changelog
 
+## 2.3.0 (2026-11-11)
+
+Everything since 2.0.0 (the in-between 2.0.1 and 2.1.0 were never released).
+
+- Optional PDF folder (⚙ > "Path for PDFs discovered" > Paste path). Once picked, every PDF
+  you download from then on is also copied to
+  `<PDF folder>\<Creator>\<the creator's file name>`. The archive keeps
+  its own copy beside the zips.
+- Nothing in the PDF folder is ever overwritten: the same file already
+  there (or in that creator's `_Other` folder) is skipped, and a different
+  file with the same name is left alone and noted in History.
+- If Chrome needs your OK for the PDF folder again, downloads carry on and
+  the waiting PDFs are copied at the next Start.
+- PDFs downloaded before the folder was picked are not copied.
+- Folder paths in ⚙ are set with Paste path: copy the path in your file
+  browser, click the button. Chrome doesn't tell extensions where folders are, so
+  a note then asks you to select the folder once in Chrome's own window
+  (it opens only when you click, and starts at the Desktop). A ✓ shows when the
+  path and the confirmed folder agree; a note explains when they don't
+  (wrong level, or a creator's own folder picked by mistake).
+- Works the same on Windows, Mac and Linux: the wording says "your file
+  browser", and copied locations use that computer's kind of slashes.
+- New **Skip busts** and **Skip statues** settings (⚙), both off by
+  default. When on, files with "bust" / "statue" in the name are never
+  downloaded and don't count against a model. The setting turns orange,
+  and so does the count (e.g. 11/12) of any model that is complete except
+  for them, with a tooltip saying why.
+- **Don't want**: point at a model, release or creator and click it to hide
+  it. Hidden models leave the list, its counts and New, and are never
+  downloaded; a Sync keeps them hidden. **Hidden (n)** shows them, and
+  **Restore** brings one back, badged NEW.
+- "Skip these creators" is now "Skip creators", and its checkboxes line up.
+- New **Clear failed** button beside Retry failed: unchecks the failed files
+  so nothing keeps retrying them (tick the model again to get them later).
+  "Expand" is now "Expand all" / "Collapse all", and the list buttons are
+  all one size.
+- With the PDF path set, a 📄 row in History copies the file's full
+  location when clicked, like ✓ rows do.
+
+- PDFs download from their own link. MMF gives PDFs a separate link from
+  zips; asked for the zip way, it answers with the model's page, which
+  2.0.0 took for a Cloudflare check and paused on, every time. Press Sync
+  library once after updating: models with a PDF are read again.
+- A pause for a web page now says which file, the HTTP status and the
+  page's title, and tells a Cloudflare check from a log-in page.
+- If MMF answers one file's link with the model's own page, only that file
+  fails (asked once); the rest of the run carries on.
+
 ## 2.0.0 (2026-10-29)
 
 Everything now runs inside Chrome: no Node, no bridge window, no command

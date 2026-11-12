@@ -9,6 +9,8 @@ const extOf = (name) => { const i = name.lastIndexOf('.'); return i > 0 ? name.s
 
 const ARCHIVE = /\.(zip|rar|7z)$/i;
 export const MMF_SITE = 'https://www.myminifactory.com';
+// How a model page is read into a file list. Raise it when that changes.
+export const PAGE_FORMAT = 2;
 
 export function itemsForObject(entry, obj, dest) {
   const files = (obj.files?.items ?? []).filter((f) => f?.download_url && f.id != null);
@@ -133,7 +135,7 @@ function jsonArrayAfter(html, key) {
  * A model's page on MMF carries its download list, which is what the
  * extension reads instead of the official API:
  *   "archives":[{"id":108451,"path":"Master Wendigo Lychee.zip","size":"86528557",...}]
- *   "pdfFiles":[...]
+ *   "pdfFiles":[{"id":10325,"name":"Rules v1.1.pdf","size":"51385676","downloadOriginalUrl":"/download/pdf/10325/watermark",...}]
  *   state.filesInfo[1544916] = { "name": "bigbyp.stl" }   (loose parts)
  * Returned in the API's file-list shape so itemsForObject works on either.
  * null if the page has no download list at all (logged out, Cloudflare).
@@ -143,10 +145,18 @@ export function parseArchivesFromPage(html, objectId) {
   if (!archives) return null;
   const pdfs = jsonArrayAfter(html, 'pdfFiles') ?? [];
   const items = [];
-  for (const a of [...archives, ...pdfs]) {
+  for (const a of archives) {
     const name = a?.path ?? a?.filename ?? a?.name;
     if (!a || a.id == null || !name) continue;
     items.push({ id: a.id, filename: name, size: Number(a.size) || null, download_url: `${MMF_SITE}/download/${objectId}?archive_id=${a.id}` });
+  }
+  // PDFs are not archives: they have their own ids and their own link
+  // ("downloadOriginalUrl": "/download/pdf/10325/watermark"). Asking for one
+  // with ?archive_id= just sends the browser back to the model's page.
+  for (const p of pdfs) {
+    const name = p?.name ?? p?.path ?? p?.filename;
+    if (!p || p.id == null || !name) continue;
+    items.push({ id: p.id, filename: name, size: Number(p.size) || null, download_url: pdfUrl(p) });
   }
   const seen = new Set(items.map((i) => String(i.id)));
   for (const m of html.matchAll(/filesInfo\[(\d+)\]\s*=\s*(\{[^}]*\})/g)) {
@@ -157,5 +167,25 @@ export function parseArchivesFromPage(html, objectId) {
     seen.add(m[1]);
     items.push({ id: Number(m[1]), filename: name, size: null, download_url: `${MMF_SITE}/download/${objectId}?downloadfile=${encodeURIComponent(name)}` });
   }
-  return { id: objectId, files: { items } };
+  return { id: objectId, format: PAGE_FORMAT, files: { items } };
+}
+
+// The page's own link for a PDF, kept only if it points at MMF itself.
+function pdfUrl(pdf) {
+  const fallback = `${MMF_SITE}/download/pdf/${encodeURIComponent(pdf.id)}/watermark`;
+  if (typeof pdf.downloadOriginalUrl !== 'string' || !pdf.downloadOriginalUrl) return fallback;
+  try {
+    const u = new URL(pdf.downloadOriginalUrl, MMF_SITE);
+    return u.origin === MMF_SITE && u.pathname.startsWith('/download/') ? u.href : fallback;
+  } catch { return fallback; }
+}
+
+/**
+ * File lists are remembered so a Sync doesn't re-read every model page. Lists
+ * saved before PDFs got their own links (format 2) are read again, but only
+ * for models that have a PDF: nothing else changed.
+ */
+export function isStaleObject(obj) {
+  if (!obj || obj.format === PAGE_FORMAT) return false;
+  return (obj.files?.items ?? []).some((f) => /\.pdf$/i.test(f?.filename ?? f?.path ?? ''));
 }

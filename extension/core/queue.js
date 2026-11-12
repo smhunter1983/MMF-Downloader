@@ -14,6 +14,34 @@ export const STATUS = Object.freeze({
 
 export const MAX_ATTEMPTS = 3;
 
+// ---------- busts and statues ----------
+// Both are told by name: "BUSTS.zip", "Overlord Bust.zip", "Arienes, Ocean Queen, BUST.zip", or a
+// model called "... Bust"; "Dragon Statue.zip", "STATUES.zip", or a model called "... Statue".
+// ("Buster", "robust" and "statuesque" are neither.)
+const named = (word) => {
+  const re = new RegExp(`(^|[^a-z])${word}s?([^a-z]|$)`, 'i');
+  return (i) => re.test(i.filename ?? '') || re.test(i.originalFilename ?? '') || re.test(i.objectName ?? '');
+};
+export const isBust = named('bust');
+export const isStatue = named('statue');
+
+// With "Skip busts" / "Skip statues" on, each such file not already downloaded is left out: never
+// fetched, and not counted as missing. Ones already on disk stay as they are.
+// rules: { busts: true|false, statues: true|false }. Returns how many are left out.
+export function applySkipRules(q, rules = {}) {
+  let n = 0;
+  for (const i of q.items) {
+    const kind = i.status === STATUS.DONE ? null
+      : rules.busts && isBust(i) ? 'bust'
+        : rules.statues && isStatue(i) ? 'statue' : null;
+    if (kind) { i.ruleOut = kind; n++; } else delete i.ruleOut;
+    delete i.bustOut; // the first name this flag had
+  }
+  return n;
+}
+// Left out of downloading: by an unchecked box, by a skip rule, or because the model is hidden ("Don't want").
+const leftOut = (i) => (i.skip || i.ruleOut || i.hidden) && i.status !== STATUS.DONE;
+
 
 
 // Creator > Bundle > Object view of the queue for the dashboard.
@@ -24,17 +52,20 @@ export function newestSeen(q) {
   return latest;
 }
 
-export function buildTree(q) {
+// Hidden models ("Don't want") are left out of the list and of every count in it;
+// buildTree(q, { hidden: true }) gives the hidden ones on their own.
+export function buildTree(q, { hidden = false } = {}) {
   const latest = newestSeen(q);
   const creators = new Map();
   for (const i of q.items) {
+    if (Boolean(i.hidden) !== hidden) continue;
     const [creatorDir, bundleDir] = i.dest;
     if (!creators.has(creatorDir)) creators.set(creatorDir, new Map());
     const bundles = creators.get(creatorDir);
     if (!bundles.has(bundleDir)) bundles.set(bundleDir, new Map());
     const objects = bundles.get(bundleDir);
     if (!objects.has(i.objectId)) {
-      objects.set(i.objectId, { id: i.objectId, name: i.objectName, files: 0, bytes: 0, unsized: 0, doneFiles: 0, skip: true, failed: 0, isNew: false });
+      objects.set(i.objectId, { id: i.objectId, name: i.objectName, files: 0, bytes: 0, unsized: 0, doneFiles: 0, bustsOut: 0, statuesOut: 0, skip: true, failed: 0, isNew: false });
     }
     const o = objects.get(i.objectId);
     o.files++;
@@ -43,14 +74,16 @@ export function buildTree(q) {
     o.bytes += bytes;
     if (!bytes) o.unsized++;
     if (i.status === STATUS.DONE) o.doneFiles++;
-    if (i.status === STATUS.FAILED) o.failed++;
+    if (i.ruleOut && i.status !== STATUS.DONE) o[i.ruleOut === 'statue' ? 'statuesOut' : 'bustsOut']++;
+    else if (i.status === STATUS.FAILED) o.failed++;
     if (!i.skip) o.skip = false;
     if (latest && i.firstSeen === latest) o.isNew = true;
   }
   // NEW means "new since the last Sync and not downloaded yet".
   for (const bundles of creators.values()) {
     for (const objects of bundles.values()) {
-      for (const o of objects.values()) if (o.isNew && o.files && o.doneFiles === o.files) o.isNew = false;
+      // Busts and statues left out by a skip rule don't keep a model "new".
+      for (const o of objects.values()) if (o.isNew && o.files && o.doneFiles === o.files - o.bustsOut - o.statuesOut) o.isNew = false;
     }
   }
   return [...creators].sort(([a], [b]) => a.localeCompare(b)).map(([name, bundles]) => ({
@@ -74,6 +107,22 @@ export function setSkip(q, objectIds, skip) {
   return changed;
 }
 
+// "Don't want": hide whole models, or Restore them. Their Get/Skip tick is left as it was.
+// A restored model comes back badged NEW (until it is fully downloaded), so it's easy to find.
+export function setHidden(q, objectIds, hidden, now = Date.now()) {
+  const ids = new Set(objectIds.map(Number));
+  const newest = newestSeen(q) ?? new Date(now).toISOString();
+  let changed = 0;
+  for (const i of q.items) {
+    if (ids.has(Number(i.objectId)) && Boolean(i.hidden) !== hidden) {
+      if (hidden) i.hidden = true; else { delete i.hidden; i.firstSeen = newest; }
+      changed++;
+    }
+  }
+  return changed;
+}
+export const hiddenModels = (q) => new Set(q.items.filter((i) => i.hidden).map((i) => i.objectId)).size;
+
 // Where an item's file lives, as folder names under the archive root.
 export const finalParts = (item) => [...item.dest, item.filename];
 
@@ -95,7 +144,10 @@ export async function mergeQueue(existing, planned, disk, now = Date.now()) {
   // When each model first appeared in a sync, so the dashboard can flag what's
   // NEW. Models in the very first plan have none (they're the baseline).
   const modelSeen = new Map();
+  // A model hidden with "Don't want" stays hidden, including any files it gains later.
+  const modelHidden = new Set();
   for (const i of existing?.items ?? []) {
+    if (i.hidden) modelHidden.add(i.objectId);
     modelSkipped.set(i.objectId, (modelSkipped.get(i.objectId) ?? true) && i.skip === true);
     if (!modelSeen.has(i.objectId) || (i.firstSeen && (!modelSeen.get(i.objectId) || i.firstSeen < modelSeen.get(i.objectId)))) {
       modelSeen.set(i.objectId, i.firstSeen ?? modelSeen.get(i.objectId) ?? null);
@@ -112,6 +164,7 @@ export async function mergeQueue(existing, planned, disk, now = Date.now()) {
     const prev = old.get(p.key);
     const item = { ...p, status: STATUS.PENDING, attempts: 0, error: null, skip: modelSkipped.get(p.objectId) ?? false };
     item.firstSeen = modelSeen.has(p.objectId) ? modelSeen.get(p.objectId) : (existing ? planTime : null);
+    if (modelHidden.has(p.objectId)) item.hidden = true;
     if (prev) {
       item.skip = prev.skip === true;
       item.status = prev.status === STATUS.ACTIVE ? STATUS.PENDING : prev.status;
@@ -120,6 +173,7 @@ export async function mergeQueue(existing, planned, disk, now = Date.now()) {
       item.doneAt = prev.doneAt;
       item.doneBytes = prev.doneBytes;
       item.note = prev.note;
+      if (prev.pdfCopy) item.pdfCopy = prev.pdfCopy; // copied (or waiting to be) to the PDF folder
       // A whole-model download that MMF served as a single STL keeps the name it was saved under.
       if (item.wholeZip && prev.status === STATUS.DONE && prev.filename) item.filename = prev.filename;
     }
@@ -172,7 +226,7 @@ export async function mergeQueue(existing, planned, disk, now = Date.now()) {
 // dashboard count the batch, then reset when it finishes.
 
 const sizeOfItem = (i) => Number(i.size) || Number(i.doneBytes) || 0;
-const wanted = (i) => !i.skip && i.status !== STATUS.DONE;
+const wanted = (i) => !i.skip && !i.ruleOut && !i.hidden && i.status !== STATUS.DONE;
 
 export function startBatch(q, now = Date.now()) {
   const add = q.items.filter(wanted).map((i) => i.key);
@@ -194,7 +248,7 @@ export function batchSummary(q) {
   const s = { total: 0, done: 0, failed: 0, bytesTotal: 0, bytesDone: 0, startedAt: q.batch.startedAt };
   for (const k of q.batch.keys) {
     const i = byKey.get(k);
-    if (!i || (i.skip && i.status !== STATUS.DONE)) continue; // unchecked mid-run
+    if (!i || leftOut(i)) continue; // unchecked mid-run, or left out by a skip rule
     s.total++;
     s.bytesTotal += sizeOfItem(i);
     if (i.status === STATUS.DONE) { s.done++; s.bytesDone += sizeOfItem(i); }
@@ -228,7 +282,8 @@ export function upcoming(q) {
 export function summarize(q) {
   const s = { total: 0, pending: 0, active: 0, done: 0, failed: 0, bytesTotal: 0, bytesDone: 0, skipped: 0, bytesSkipped: 0 };
   for (const i of q.items) {
-    if (i.skip && i.status !== STATUS.DONE) {
+    if (i.hidden && i.status !== STATUS.DONE) continue; // hidden models aren't "unchecked": they aren't counted at all
+    if (leftOut(i)) {
       s.skipped++;
       s.bytesSkipped += Number(i.size) || 0;
       continue;

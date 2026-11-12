@@ -28,18 +28,35 @@
   button:hover:not(:disabled) { border-color: var(--muted); }
   button:disabled { opacity: .45; cursor: default; }
   #settingsBtn { padding: 6px 9px; }
-  #settingsBtn.on, #folder.warn { border-color: var(--warn); }
+  #settingsBtn.on, #folder.warn, #pathPaste.warn, #pdfPaste.warn { border-color: var(--warn); }
   #folder { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .settings { margin-top: 10px; padding: 10px; border: 1px solid var(--line); border-radius: 7px; display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; }
-  .settings label { display: flex; gap: 6px; align-items: center; color: var(--muted); }
+  .settings label, .settings .setrow { display: flex; gap: 6px; align-items: center; color: var(--muted); }
   .settings .wide { flex: 1 1 100%; }
-  .settings label.wide input { flex: 1; width: auto; }
+  .settings label.wide > input[type=text] { flex: 1; width: auto; }
+  /* The folder paths: labels, boxes and folder buttons each in their own column, so they line up. */
+  .settings .paths { display: grid; grid-template-columns: max-content 1fr 1.2em max-content max-content; gap: 8px 6px; align-items: center; }
+  .settings .paths input { width: auto; min-width: 0; }
+  .settings .paths button { text-align: left; }
+  .settings .pathhelp { margin: 0; }
+  /* Skip busts / Skip statues: orange when on, the same orange as the counts it explains in the list. */
+  .settings .bustrow input { flex: none; width: auto; margin: 0; accent-color: var(--warn); }
+  .settings .bustrow.on { color: var(--warn); font-weight: 600; }
+  .settings .bustrow span { font-weight: 400; margin-left: 6px; }
+  .settings .confirm { display: flex; gap: 12px; align-items: center; }
+  .settings .confirm.hidden { display: none; }
+  .settings .confirm span { flex: 1; }
+  .settings .confirm button { flex: none; color: var(--text); }
+  .settings .pathhelp b { color: var(--text); font-weight: 600; }
+  .settings .pathstate { text-align: center; cursor: default; }
+  .settings .pathstate.warn { color: var(--warn); }
   .settings summary { cursor: pointer; color: var(--text); }
   .capwarn { flex: 1 1 100%; color: var(--warn); background: var(--warn-bg); border-radius: 6px; padding: 6px 10px; font-size: 12px; }
   .creatorhint { color: var(--muted); font-size: 12px; margin: 6px 0; }
   .creatorlist { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 2px 14px; max-height: 260px; overflow: auto; padding: 4px 2px; }
   .creatorlist label { display: flex; gap: 6px; align-items: center; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .creatorlist small { color: var(--muted); }
+  .creatorlist input { flex: none; width: auto; margin: 0; }
   .settings input { font: inherit; padding: 4px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--text); width: 80px; }
   button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
   .bar { height: 8px; border-radius: 4px; background: var(--line); overflow: hidden; margin: 12px 0 6px; }
@@ -53,22 +70,30 @@
   .msgrow button { margin-top: 10px; flex: none; align-self: flex-start; width: 120px; white-space: nowrap; }
   .msg.warn { background: var(--warn-bg); color: var(--warn); }
   .toolbar { display: flex; gap: 8px; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--bg); position: sticky; top: var(--header-h, 150px); z-index: 1; }
-  .toolbar input { flex: 1; font: inherit; padding: 6px 10px; border-radius: 7px; border: 1px solid var(--line); background: var(--panel); color: var(--text); }
+  /* The list buttons share one size: each is as wide as the widest. */
+  .toolbtns { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 8px; }
+  .toolbtns button { white-space: nowrap; }
+  .toolbar input { flex: 1; min-width: 140px; font: inherit; padding: 6px 10px; border-radius: 7px; border: 1px solid var(--line); background: var(--panel); color: var(--text); }
   .selsum { color: var(--muted); font-size: 12px; padding: 8px 16px 0; }
   .tree { padding: 6px 8px 40px; }
-  .row { display: grid; grid-template-columns: 22px 18px 1fr auto auto; align-items: center; gap: 6px; padding: 5px 8px; border-radius: 6px; }
+  .row { display: grid; grid-template-columns: 22px 18px 1fr auto auto auto; align-items: center; gap: 6px; padding: 5px 8px; border-radius: 6px; }
   .row:hover { background: var(--row-hover); }
+  /* "Don't want" / "Restore": only on the row the pointer is over. */
+  .row .hidebtn { visibility: hidden; font-size: 11px; padding: 1px 8px; color: var(--muted); }
+  .row:hover .hidebtn, .row .hidebtn:focus-visible { visibility: visible; }
   .row .twisty { cursor: pointer; color: var(--muted); user-select: none; text-align: center; }
   .row .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .row .meta { color: var(--muted); font-size: 12px; text-align: right; white-space: nowrap; }
   .row .state { font-size: 11px; min-width: 64px; text-align: right; color: var(--muted); }
   .row .state.done { color: var(--accent); } .row .state.failed { color: var(--bad); }
+  .row .state.nobust { color: var(--warn); }
+  .selsum .skipword { color: var(--warn); font-weight: 600; }
   .row .state.link { cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
   .row .state.link:hover { text-decoration-style: solid; }
   .lvl-0 > .row { font-weight: 600; }
   .lvl-1 { margin-left: 20px; } .lvl-2 { margin-left: 40px; }
   .skipped > .row .name, .skipped > .row .meta { opacity: .5; text-decoration: line-through; }
-  .hidden { display: none; }
+  .hidden { display: none !important; }
   .empty { padding: 30px 16px; color: var(--muted); text-align: center; }
   .new { display: inline-block; font-size: 10px; font-weight: 700; letter-spacing: .04em; color: var(--accent-ink); background: var(--accent); border-radius: 4px; padding: 0 5px; vertical-align: 1px; }
   #newOnly.on { border-color: var(--accent); background: var(--row-hover); }
@@ -117,12 +142,28 @@
     </div>
     <div class="msgrow"><div id="msg" class="msg">Connecting...</div><button id="allowFolder" class="hidden" title="Chrome asks once per folder; choose &quot;Allow on every visit&quot;">Allow folder</button></div>
     <div id="settings" class="settings hidden">
-      <label>Downloads per hour <input id="setCap" type="number" min="1" max="1000"></label>
-      <label class="wide">Full path of the archive folder (optional, for copied locations) <input id="setPath" type="text" placeholder="e.g. Z:\Downloads\…\MMF"></label>
+      <label>Downloads per hour: <input id="setCap" type="number" min="1" max="1000"></label>
+      <label>If MMF refuses a download, retry after: <input id="setRetry" type="number" min="5" max="120"> min</label>
       <div id="capWarn" class="capwarn hidden">⚠ Above 150 an hour, MMF has been reported to start refusing downloads or flagging accounts. 120 is the safe default.</div>
-      <label>If MMF refuses a download, retry after <input id="setRetry" type="number" min="5" max="120"> min</label>
+      <div class="creatorhint wide pathhelp">In your 'File Browser', copy the path and paste it here. (Chrome Extension Limitation)</div>
+      <div class="wide paths">
+        <label for="setPath">Path of archive folder:</label>
+        <input id="setPath" type="text">
+        <span id="pathState" class="pathstate"></span>
+        <button id="pathPaste" type="button" title="Paste the folder path you copied in your file browser">Paste path</button>
+        <button id="pathClear" type="button" title="Blank the path. Your archive folder itself stays set: downloads need it.">Clear</button>
+        <label id="pdfLabel" for="setPdfPath">Path for PDFs discovered:</label>
+        <input id="setPdfPath" type="text">
+        <span id="pdfState" class="pathstate"></span>
+        <button id="pdfPaste" type="button" title="Paste the folder path you copied in your file browser">Paste path</button>
+        <button id="pdfOff" type="button" title="Blank the path and stop copying PDFs to this folder. Nothing already copied is touched.">Clear</button>
+      </div>
+      <div id="pdfHint" class="capwarn hidden"></div>
+      <label id="bustRow" class="wide bustrow" title="Bust files (their name says so, like BUSTS.zip or Overlord Bust.zip) are never downloaded, and a model counts as complete without them."><input id="setBusts" type="checkbox"> Skip busts<span>(Skips 'Bust' style models, counts reflect this change)</span></label>
+      <label id="statueRow" class="wide bustrow" title="Statue files (their name says so, like Dragon Statue.zip or STATUES.zip) are never downloaded, and a model counts as complete without them."><input id="setStatues" type="checkbox"> Skip statues<span>(Skips 'Statue' style models, counts reflect this change)</span></label>
+      <div id="confirmRow" class="capwarn confirm hidden"><span id="confirmText"></span><button id="confirmBtn" type="button"></button></div>
       <details id="excludeBox" class="wide">
-        <summary>Skip these creators <span id="excludeCount"></span></summary>
+        <summary>Skip creators <span id="excludeCount"></span></summary>
         <div class="creatorhint">Ticked creators are left out of the download list (e.g. ones that moved off MMF). Takes effect at the next Sync.</div>
         <div id="creatorList" class="creatorlist"></div>
       </details>
@@ -131,11 +172,15 @@
   </header>
   <div class="toolbar" id="toolbar">
     <input id="search" type="search" placeholder="Filter creators, releases, models...">
-    <button id="getAll" title="Check (Get) everything shown; with a filter, only what matches">Check all</button>
-    <button id="skipAll" title="Uncheck (Skip) everything shown; with a filter, only what matches">Uncheck all</button>
-    <button id="newOnly" class="hidden" title="Show only models that are new since the last Sync">New</button>
-    <button id="expand">Expand</button>
-    <button id="retry" class="hidden">Retry failed</button>
+    <div class="toolbtns">
+      <button id="getAll" title="Check (Get) everything shown; with a filter, only what matches">Check all</button>
+      <button id="skipAll" title="Uncheck (Skip) everything shown; with a filter, only what matches">Uncheck all</button>
+      <button id="newOnly" class="hidden" title="Show only models that are new since the last Sync">New</button>
+      <button id="hiddenOnly" class="hidden" title="Show the models you hid with Don't want">Hidden</button>
+      <button id="expand" title="Open every creator one level, to show its releases">Expand all</button>
+      <button id="retry" class="hidden" title="Queue the failed files again; they download at the next Start">Retry failed</button>
+      <button id="clearFailed" class="hidden" title="Stop trying the failed files: they are unchecked (set to Skip). Tick the model again to get them later.">Clear failed</button>
+    </div>
     <select id="histCreator" class="hidden" title="Only this creator"><option value="">All creators</option></select>
     <select id="histFilter" class="hidden" title="Which history to show">
       <option value="all">All</option><option value="done">Downloaded</option>
