@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.3.1 (2026-11-11)
+
+- README brought up to date for 2.3: settings, troubleshooting, and a new
+  "Upgrading from 2.0" section.
+- Two in-app tips now point at the Paste path rows in ⚙.
+
 ## 2.3.0 (2026-11-11)
 
 Everything since 2.0.0 (the in-between 2.0.1 and 2.1.0 were never released).
@@ -38,7 +44,6 @@ Everything since 2.0.0 (the in-between 2.0.1 and 2.1.0 were never released).
   all one size.
 - With the PDF path set, a 📄 row in History copies the file's full
   location when clicked, like ✓ rows do.
-- README brought up to date (settings, troubleshooting, upgrading from 2.0).
 - PDFs download from their own link. MMF gives PDFs a separate link from
   zips; asked for the zip way, it answers with the model's page, which
   2.0.0 took for a Cloudflare check and paused on, every time. Press Sync
